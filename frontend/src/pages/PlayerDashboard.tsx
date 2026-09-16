@@ -1,0 +1,224 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  User as UserIcon,
+  Trophy,
+  Layers,
+  Calendar,
+  Coins,
+  TrendingUp,
+  Megaphone,
+  Settings,
+  LogOut,
+  Clock,
+  PlayCircle,
+} from 'lucide-react';
+import { HeaderLogo } from '../components/common/HeaderLogo';
+import { useAuth } from '../context/AuthContext';
+
+export const PlayerDashboard: React.FC = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [currentDateTime, setCurrentDateTime] = useState('');
+  const [selectedModule, setSelectedModule] = useState<string | null>(null);
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = now.getFullYear();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      setCurrentDateTime(`${day}/${month}/${year} ${hours}:${minutes}`);
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
+  const modules = [
+    {
+      id: 'jogadores',
+      title: 'JOGADORES',
+      desc: 'Gerencie os jogadores do clube',
+      icon: UserIcon,
+      color: 'from-amber-600 to-yellow-800',
+      action: () => setSelectedModule('Perfil de Jogador e Lista de Amigos'),
+    },
+    {
+      id: 'ranking',
+      title: 'RANKING',
+      desc: 'Acompanhe o ranking dos jogadores',
+      icon: Trophy,
+      color: 'from-emerald-700 to-teal-950',
+      action: () => setSelectedModule('Ranking Geral do Clube'),
+    },
+    {
+      id: 'mesas',
+      title: 'MESAS',
+      desc: 'Gerencie as mesas e partidas',
+      icon: Layers,
+      color: 'from-red-900 to-amber-950',
+      action: () => navigate('/table/lobby'),
+    },
+    {
+      id: 'torneios',
+      title: 'TORNEIOS',
+      desc: 'Crie e gerencie torneios',
+      icon: Calendar,
+      color: 'from-purple-800 to-indigo-950',
+      action: () => setSelectedModule('Inscrições em Torneios Disponíveis'),
+    },
+    {
+      id: 'cashgames',
+      title: 'CASH GAMES',
+      desc: 'Gerencie jogos de cash game',
+      icon: Coins,
+      color: 'from-yellow-700 to-amber-950',
+      action: () => navigate('/table/lobby'),
+    },
+    {
+      id: 'estatisticas',
+      title: 'ESTATÍSTICAS',
+      desc: 'Desempenho e relatórios',
+      icon: TrendingUp,
+      color: 'from-cyan-900 to-blue-950',
+      action: () => setSelectedModule('Suas Estatísticas Pessoais (VPIP, Lucro)'),
+    },
+    {
+      id: 'comunicados',
+      title: 'COMUNICADOS',
+      desc: 'Avisos e comunicados para os jogadores',
+      icon: Megaphone,
+      color: 'from-teal-800 to-emerald-950',
+      action: () => setSelectedModule('Mural de Avisos e Comunicados Oficiais'),
+    },
+    {
+      id: 'configuracoes',
+      title: 'CONFIGURAÇÕES',
+      desc: 'Ajustes e preferências do sistema',
+      icon: Settings,
+      color: 'from-zinc-700 to-zinc-900',
+      action: () => setSelectedModule('Preferências de Baralho, Sons e Tema'),
+    },
+  ];
+
+  return (
+    <div className="min-h-screen flex flex-col justify-between p-4 max-w-5xl mx-auto py-6">
+      {/* Topo do Painel */}
+      <div className="space-y-4">
+        <HeaderLogo />
+
+        <div className="flex items-center justify-center space-x-3 text-center pt-2">
+          <span className="text-[#d4af37]">◆</span>
+          <h2 className="text-lg md:text-xl font-extrabold tracking-widest text-[#f5d77f] uppercase drop-shadow">
+            ACESSO AOS MÓDULOS
+          </h2>
+          <span className="text-[#d4af37]">◆</span>
+        </div>
+
+        {/* Modal de Módulo Simulado */}
+        {selectedModule && (
+          <div className="p-4 bg-zinc-900/95 border border-[#d4af37]/60 rounded-xl text-center space-y-2">
+            <p className="text-xs text-[#d4af37] uppercase font-bold tracking-wider">Módulo Selecionado:</p>
+            <p className="text-white text-base font-semibold">{selectedModule}</p>
+            <button
+              onClick={() => setSelectedModule(null)}
+              className="mt-2 px-4 py-1.5 bg-[#d4af37] text-black text-xs font-bold rounded uppercase cursor-pointer"
+            >
+              Fechar Módulo
+            </button>
+          </div>
+        )}
+
+        {/* Grid de 8 Módulos */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-5 pt-2">
+          {modules.map((mod) => {
+            const Icon = mod.icon;
+            return (
+              <button
+                key={mod.id}
+                onClick={mod.action}
+                className="module-card rounded-xl p-4 sm:p-5 flex flex-col items-center justify-center text-center space-y-2.5 cursor-pointer group"
+              >
+                <div
+                  className={`w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-gradient-to-br ${mod.color} border border-[#d4af37]/40 flex items-center justify-center shadow-lg group-hover:scale-110 transition`}
+                >
+                  <Icon className="w-7 h-7 sm:w-8 sm:h-8 text-[#f5d77f]" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-extrabold tracking-wider text-[#f5d77f] uppercase">
+                    {mod.title}
+                  </h3>
+                  <p className="text-[10px] sm:text-[11px] text-zinc-400 font-medium line-clamp-2 mt-0.5">
+                    {mod.desc}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Banner de Boas-Vindas */}
+      <div className="my-6 p-4 rounded-xl bg-gradient-to-r from-amber-950/40 via-zinc-900/80 to-amber-950/40 border border-[#d4af37]/30 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 rounded-lg bg-[#d4af37]/20 border border-[#d4af37]/40">
+            <PlayCircle className="w-6 h-6 text-[#f5d77f]" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-[#f5d77f]">
+              Bem-vindo, {user?.nome_completo || 'Jogador'}!
+            </h4>
+            <p className="text-xs text-zinc-400">
+              Saldo: <span className="text-[#f5d77f] font-bold">{user?.saldo_fichas || 1000} fichas</span> | Acesse o módulo desejado
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => navigate('/table/lobby')}
+          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white font-bold text-xs rounded-lg uppercase tracking-wider transition shadow-lg cursor-pointer"
+        >
+          JOGAR AGORA
+        </button>
+      </div>
+
+      {/* Barra Inferior Fixa/Estilizada */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+        {/* Status do Jogador */}
+        <div className="bg-[#12151c] border border-[#d4af37]/30 rounded-xl px-4 py-2.5 flex items-center space-x-3">
+          <div className="w-8 h-8 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center text-[#f5d77f] font-bold text-xs">
+            {user?.nome_completo?.charAt(0) || 'J'}
+          </div>
+          <div>
+            <p className="text-xs font-bold text-zinc-200">{user?.nome_completo || 'Jogador'}</p>
+            <p className="text-[10px] text-[#d4af37] font-semibold flex items-center gap-1">
+              👑 MEMBRO DO CLUBE
+            </p>
+          </div>
+        </div>
+
+        {/* Data e Hora */}
+        <div className="bg-[#12151c] border border-[#d4af37]/30 rounded-xl px-4 py-2.5 flex items-center justify-center space-x-2 text-zinc-300">
+          <Clock className="w-4 h-4 text-[#d4af37]" />
+          <span className="text-xs font-mono font-bold tracking-wider">{currentDateTime}</span>
+        </div>
+
+        {/* Botão Sair */}
+        <button
+          onClick={handleLogout}
+          className="bg-gradient-to-r from-red-950 to-red-900 hover:from-red-900 hover:to-red-800 border border-red-500/50 rounded-xl px-4 py-2.5 flex items-center justify-center space-x-2 text-red-200 hover:text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+        >
+          <LogOut className="w-4 h-4" />
+          <span>SAIR DO SISTEMA</span>
+        </button>
+      </div>
+    </div>
+  );
+};

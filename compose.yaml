@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: poker-dos-amigos-postgres
+    environment:
+      POSTGRES_DB: poker_dos_amigos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - poker_dos_amigos_pgdata:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d poker_dos_amigos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  poker_dos_amigos_pgdata:
