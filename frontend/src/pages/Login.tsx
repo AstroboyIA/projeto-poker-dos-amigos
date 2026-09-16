@@ -6,10 +6,10 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
-  const [email, setEmail] = useState('jonatas@pokerdosamigos.com');
-  const [senha, setSenha] = useState('poker123');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [lembrarMe, setLembrarMe] = useState(true);
+  const [lembrarMe, setLembrarMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
