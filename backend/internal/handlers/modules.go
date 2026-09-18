@@ -1,18 +1,110 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/ws"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/pkg/response"
 )
 
-type ModulesHandler struct{}
+type ModulesHandler struct {
+	hub         *ws.Hub
+	authHandler *AuthHandler
+	tables      []models.PokerTable
+	mu          sync.RWMutex
+}
 
-func NewModulesHandler() *ModulesHandler {
-	return &ModulesHandler{}
+func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
+	seedTables := []models.PokerTable{
+		{
+			ID:            uuid.MustParse("a1111111-1111-1111-1111-111111111111"),
+			Nome:          "Mesa VIP Ouro #01 (Texas Hold'em)",
+			Tipo:          models.TableTypeCashGame,
+			SmallBlind:    25,
+			BigBlind:      50,
+			BuyInMin:      1000,
+			BuyInMax:      5000,
+			MaxSeats:      9,
+			Status:        models.TableStatusRunning,
+			CurrentPot:    1450,
+			BotSeats:      []int{3, 5, 7},
+			OccupiedSeats: []int{1, 2, 4, 6},
+			CreatedBy:     "Clube",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		},
+		{
+			ID:            uuid.MustParse("a2222222-2222-2222-2222-222222222222"),
+			Nome:          "Mesa dos Amigos Fechada",
+			Tipo:          models.TableTypeCashGame,
+			SmallBlind:    10,
+			BigBlind:      20,
+			BuyInMin:      400,
+			BuyInMax:      2000,
+			MaxSeats:      9,
+			Status:        models.TableStatusRunning,
+			CurrentPot:    320,
+			BotSeats:      []int{2, 8},
+			OccupiedSeats: []int{1, 4, 6},
+			Password:      "1234",
+			CreatedBy:     "Felipe",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		},
+		{
+			ID:            uuid.MustParse("a3333333-3333-3333-3333-333333333333"),
+			Nome:          "Mesa Torneio Amigos Final Table",
+			Tipo:          models.TableTypeTournament,
+			SmallBlind:    500,
+			BigBlind:      1000,
+			BuyInMin:      0,
+			BuyInMax:      0,
+			MaxSeats:      9,
+			Status:        models.TableStatusRunning,
+			CurrentPot:    28000,
+			BotSeats:      []int{},
+			OccupiedSeats: []int{1, 2, 3, 4, 5, 6, 7, 8, 9},
+			CreatedBy:     "Diretoria",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		},
+	}
+
+	return &ModulesHandler{
+		hub:         hub,
+		authHandler: authHandler,
+		tables:      seedTables,
+	}
+}
+
+func (h *ModulesHandler) broadcastTablesUpdate() {
+	if h.hub == nil {
+		return
+	}
+	h.mu.RLock()
+	tablesCopy := make([]models.PokerTable, len(h.tables))
+	copy(tablesCopy, h.tables)
+	h.mu.RUnlock()
+
+	payload, err := json.Marshal(tablesCopy)
+	if err != nil {
+		return
+	}
+
+	msg, err := json.Marshal(ws.WSMessage{
+		Type:      "TABLES_UPDATED",
+		Payload:   payload,
+		Timestamp: time.Now().Unix(),
+	})
+	if err == nil {
+		h.hub.BroadcastAll(msg)
+	}
 }
 
 // Lista de Torneios
@@ -69,48 +161,196 @@ func (h *ModulesHandler) GetRankings(w http.ResponseWriter, r *http.Request) {
 
 // Lista de Mesas / Cash Games
 func (h *ModulesHandler) GetTables(w http.ResponseWriter, r *http.Request) {
-	tables := []models.PokerTable{
-		{
-			ID:         uuid.New(),
-			Nome:       "Mesa VIP Ouro #01 (Texas Hold'em)",
-			Tipo:       models.TableTypeCashGame,
-			SmallBlind: 25,
-			BigBlind:   50,
-			BuyInMin:   1000,
-			BuyInMax:   5000,
-			MaxSeats:   9,
-			Status:     models.TableStatusRunning,
-			CurrentPot: 1450,
-			CreatedAt:  time.Now(),
-		},
-		{
-			ID:         uuid.New(),
-			Nome:       "Mesa Bronze #02 (Micro Stakes)",
-			Tipo:       models.TableTypeCashGame,
-			SmallBlind: 5,
-			BigBlind:   10,
-			BuyInMin:   200,
-			BuyInMax:   1000,
-			MaxSeats:   6,
-			Status:     models.TableStatusRunning,
-			CurrentPot: 320,
-			CreatedAt:  time.Now(),
-		},
-		{
-			ID:         uuid.New(),
-			Nome:       "Mesa Torneio Amigos Final Table",
-			Tipo:       models.TableTypeTournament,
-			SmallBlind: 500,
-			BigBlind:   1000,
-			BuyInMin:   0,
-			BuyInMax:   0,
-			MaxSeats:   9,
-			Status:     models.TableStatusRunning,
-			CurrentPot: 28000,
-			CreatedAt:  time.Now(),
-		},
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	response.JSON(w, http.StatusOK, h.tables)
+}
+
+type CreateTableRequest struct {
+	Nome          string `json:"nome"`
+	SmallBlind    int64  `json:"small_blind"`
+	BigBlind      int64  `json:"big_blind"`
+	BuyInMin      int64  `json:"buy_in_min"`
+	BuyInMax      int64  `json:"buy_in_max"`
+	MaxSeats      int    `json:"max_seats"`
+	BotSeats      []int  `json:"bot_seats"`
+	OccupiedSeats []int  `json:"occupied_seats"`
+	Password      string `json:"password,omitempty"`
+}
+
+func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
 	}
-	response.JSON(w, http.StatusOK, tables)
+
+	var req CreateTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Dados inválidos")
+		return
+	}
+
+	if req.Nome == "" {
+		req.Nome = "Nova Mesa Cash Game"
+	}
+	if req.MaxSeats <= 0 {
+		req.MaxSeats = 9
+	}
+	if req.BotSeats == nil {
+		req.BotSeats = []int{}
+	}
+	if req.OccupiedSeats == nil {
+		req.OccupiedSeats = []int{1}
+	}
+
+	newTable := models.PokerTable{
+		ID:            uuid.New(),
+		Nome:          req.Nome,
+		Tipo:          models.TableTypeCashGame,
+		SmallBlind:    req.SmallBlind,
+		BigBlind:      req.BigBlind,
+		BuyInMin:      req.BuyInMin,
+		BuyInMax:      req.BuyInMax,
+		MaxSeats:      req.MaxSeats,
+		Status:        models.TableStatusWaiting,
+		CurrentPot:    0,
+		BotSeats:      req.BotSeats,
+		OccupiedSeats: req.OccupiedSeats,
+		Password:      req.Password,
+		CreatedBy:     claims.Nome,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	h.mu.Lock()
+	h.tables = append([]models.PokerTable{newTable}, h.tables...)
+	h.mu.Unlock()
+
+	go h.broadcastTablesUpdate()
+
+	response.JSON(w, http.StatusCreated, newTable)
+}
+
+type SeatActionRequest struct {
+	TableID    string `json:"table_id"`
+	SeatNumber int    `json:"seat_number"`
+}
+
+func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
+	var req SeatActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Dados inválidos")
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for i, t := range h.tables {
+		if t.ID.String() == req.TableID {
+			already := false
+			for _, s := range t.OccupiedSeats {
+				if s == req.SeatNumber {
+					already = true
+					break
+				}
+			}
+			if !already {
+				h.tables[i].OccupiedSeats = append(h.tables[i].OccupiedSeats, req.SeatNumber)
+				h.tables[i].UpdatedAt = time.Now()
+				go h.broadcastTablesUpdate()
+			}
+			response.JSON(w, http.StatusOK, h.tables[i])
+			return
+		}
+	}
+
+	response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+}
+
+func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
+	var req SeatActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Dados inválidos")
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for i, t := range h.tables {
+		if t.ID.String() == req.TableID {
+			newOccupied := []int{}
+			for _, s := range t.OccupiedSeats {
+				if s != req.SeatNumber {
+					newOccupied = append(newOccupied, s)
+				}
+			}
+			h.tables[i].OccupiedSeats = newOccupied
+			h.tables[i].UpdatedAt = time.Now()
+
+			// Se a mesa foi criada por usuário e esvaziou totalmente, removemos
+			if len(newOccupied) == 0 && t.CreatedBy != "Clube" && t.CreatedBy != "Diretoria" {
+				h.tables = append(h.tables[:i], h.tables[i+1:]...)
+			}
+
+			go h.broadcastTablesUpdate()
+			response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+	}
+
+	response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+}
+
+type ChipTransactionRequest struct {
+	Amount int64 `json:"amount"`
+}
+
+func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+
+	var req ChipTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
+		response.Error(w, http.StatusBadRequest, "Valor de buy-in inválido")
+		return
+	}
+
+	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+
+	if user.SaldoFichas < req.Amount {
+		response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
+		return
+	}
+
+	updatedUser, _ := h.authHandler.UpdateChips(claims.Email, -req.Amount)
+	response.JSON(w, http.StatusOK, updatedUser)
+}
+
+func (h *ModulesHandler) CashOut(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+
+	var req ChipTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount < 0 {
+		response.Error(w, http.StatusBadRequest, "Valor de cash-out inválido")
+		return
+	}
+
+	updatedUser, _ := h.authHandler.UpdateChips(claims.Email, req.Amount)
+	response.JSON(w, http.StatusOK, updatedUser)
 }
 
 // Comunicados Oficiais do Clube

@@ -108,6 +108,10 @@ func (h *Hub) Run() {
 	}
 }
 
+func (h *Hub) BroadcastAll(message []byte) {
+	h.broadcast <- message
+}
+
 func (h *Hub) BroadcastToTable(tableID uuid.UUID, message []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

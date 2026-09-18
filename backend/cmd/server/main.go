@@ -23,7 +23,7 @@ func main() {
 	go hub.Run()
 
 	authHandler := handlers.NewAuthHandler(tokenManager)
-	modulesHandler := handlers.NewModulesHandler()
+	modulesHandler := handlers.NewModulesHandler(hub, authHandler)
 
 	r := chi.NewRouter()
 
@@ -64,6 +64,11 @@ func main() {
 		r.Get("/api/tournaments", modulesHandler.GetTournaments)
 		r.Get("/api/rankings", modulesHandler.GetRankings)
 		r.Get("/api/tables", modulesHandler.GetTables)
+		r.Post("/api/tables", modulesHandler.CreateTable)
+		r.Post("/api/tables/occupy", modulesHandler.OccupySeat)
+		r.Post("/api/tables/leave", modulesHandler.LeaveSeat)
+		r.Post("/api/chips/buy-in", modulesHandler.BuyIn)
+		r.Post("/api/chips/cash-out", modulesHandler.CashOut)
 		r.Get("/api/announcements", modulesHandler.GetAnnouncements)
 
 		// Módulos Gerenciais (Admin / Gerente)

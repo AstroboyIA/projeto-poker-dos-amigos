@@ -38,6 +38,10 @@ export interface PokerTable {
   max_seats: number;
   status: string;
   current_pot: number;
+  bot_seats?: number[];
+  occupied_seats?: number[];
+  password?: string;
+  created_by?: string;
   community_cards?: Card[];
 }
 

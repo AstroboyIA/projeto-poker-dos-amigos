@@ -20,7 +20,8 @@ import {
 import type { HandEvaluation } from '../utils/pokerEngine';
 import { ChipStack, PokerChip } from '../components/poker/PokerChip';
 import { soundFX } from '../utils/audio';
-import { getTableRoomById, leaveTableSeat } from '../utils/tableRooms';
+import { getTableRoomById, leaveTableSeatRemote } from '../utils/tableRooms';
+import { api } from '../services/api';
 
 type GameStage = 'WAITING' | 'DEALING' | 'PRE_FLOP' | 'FLOP' | 'TURN' | 'RIVER' | 'SHOWDOWN' | 'HAND_OVER';
 
@@ -49,7 +50,7 @@ interface ActionLog {
 }
 
 export const PokerTablePage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, token, updateUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -74,7 +75,78 @@ export const PokerTablePage: React.FC = () => {
   const MAX_ACTION_TIME = 20; // Tempo máximo de aposta aumentado para 20 segundos
 
   // Estado Geral do Jogo
-  const [stage, setStage] = useState<GameStage>('DEALING');
+  const defaultNames: Record<number, string> = {
+    1: room?.createdBy || 'Jonatas (Sócio)',
+    2: 'Felipe (Sócio)',
+    3: 'Alex King',
+    4: "Bruno 'AllIn'",
+    5: 'Diego Bluff',
+    6: 'Carlos Shark',
+    7: 'Lucas Pro',
+    8: 'Rafael Tight',
+    9: 'Marcelo Call',
+  };
+
+  // Se a sala for personalizada e não tiver outros humanos além do criador ou bots, não injeta jogadores fantasmas
+  const isPresetRoom = tableId === 'mesa-vip-01' || tableId === 'mesa-amigos-fechada' || tableId.startsWith('a1111111') || tableId.startsWith('a2222222');
+
+  const resolvedPlayers: TablePlayer[] = [];
+
+  // Adiciona o jogador atual
+  resolvedPlayers.push({
+    id: chosenSeat,
+    seatNumber: chosenSeat,
+    name: user?.nome_completo || 'Você (VIP)',
+    isUser: true,
+    stack: initialBuyIn,
+    currentBet: 0,
+    cards: [],
+    hasFolded: false,
+    isAllIn: false,
+    hasActed: false,
+  });
+
+  // Adiciona os bots configurados
+  configuredBotSeats.forEach((seat) => {
+    resolvedPlayers.push({
+      id: seat,
+      seatNumber: seat,
+      name: `Bot #${seat} (${defaultNames[seat]?.split(' ')[0] || 'Player'})`,
+      isUser: false,
+      stack: initialBuyIn,
+      currentBet: 0,
+      cards: [],
+      hasFolded: false,
+      isAllIn: false,
+      hasActed: false,
+    });
+  });
+
+  // Se for uma sala preset demo, adiciona os outros assentos ocupados
+  if (isPresetRoom) {
+    occupiedHumanSeats.forEach((seat) => {
+      if (seat !== chosenSeat && !configuredBotSeats.has(seat) && !resolvedPlayers.some((p) => p.id === seat)) {
+        resolvedPlayers.push({
+          id: seat,
+          seatNumber: seat,
+          name: defaultNames[seat] || `Jogador #${seat}`,
+          isUser: false,
+          stack: [4850, 5200, 3400, 2100, 2800, 6100, 4200, 3900, 2600][seat - 1] || initialBuyIn,
+          currentBet: 0,
+          cards: [],
+          hasFolded: false,
+          isAllIn: false,
+          hasActed: false,
+        });
+      }
+    });
+  }
+
+  resolvedPlayers.sort((a, b) => a.seatNumber - b.seatNumber);
+
+  const [players, setPlayers] = useState<TablePlayer[]>(resolvedPlayers);
+  const [stage, setStage] = useState<GameStage>(resolvedPlayers.length >= 2 ? 'DEALING' : 'WAITING');
+
   const [handNumber, setHandNumber] = useState<number>(1);
   const [pot, setPot] = useState<number>(0);
   const [currentRoundBet, setCurrentRoundBet] = useState<number>(0);
@@ -89,43 +161,7 @@ export const PokerTablePage: React.FC = () => {
   const [winnerMessage, setWinnerMessage] = useState<string | null>(null);
   const [countdownNextHand, setCountdownNextHand] = useState<number>(5);
   const [showExitModal, setShowExitModal] = useState<boolean>(false);
-
-  // Controles de Aposta do Usuário
   const [raiseAmount, setRaiseAmount] = useState<number>(bigBlindVal * 2);
-
-  // Assentos fixos da mesa demo, humanos sentados e bots escolhidos pelo criador da sala.
-  const defaultNames = [
-    { id: 1, name: room?.createdBy || 'Jonatas (Sócio)', stack: 4850 },
-    { id: 2, name: 'Felipe (Sócio)', stack: 5200 },
-    { id: 3, name: 'Alex King', stack: 3400 },
-    { id: 4, name: "Bruno 'AllIn'", stack: 2100 },
-    { id: 5, name: 'Diego Bluff', stack: 2800 },
-    { id: 6, name: 'Carlos Shark', stack: 6100 },
-    { id: 7, name: 'Lucas Pro', stack: 4200 },
-    { id: 8, name: 'Rafael Tight', stack: 3900 },
-    { id: 9, name: 'Marcelo Call', stack: 2600 },
-  ];
-
-  const initialPlayers: TablePlayer[] = defaultNames
-    .filter((item) => item.id === chosenSeat || occupiedHumanSeats.has(item.id) || configuredBotSeats.has(item.id))
-    .map((item) => {
-      const isThisUser = item.id === chosenSeat;
-      return {
-        id: item.id,
-        seatNumber: item.id,
-        name: isThisUser ? user?.nome_completo || 'Você (VIP)' : item.name,
-        isUser: isThisUser,
-        stack: isThisUser ? initialBuyIn : item.stack,
-        currentBet: 0,
-        cards: [],
-        hasFolded: false,
-        isAllIn: false,
-        hasActed: false,
-      };
-    })
-    .sort((a, b) => a.seatNumber - b.seatNumber);
-
-  const [players, setPlayers] = useState<TablePlayer[]>(initialPlayers);
 
   const addLog = (text: string) => {
     const timeStr = new Date().toLocaleTimeString('pt-BR', { hour12: false });
@@ -141,6 +177,32 @@ export const PokerTablePage: React.FC = () => {
   };
 
   const isProcessingAITurn = useRef(false);
+
+  // Função para adicionar bot dinamicamente em mesa aguardando
+  const handleAddBotToTable = () => {
+    const currentSeats = new Set(players.map((p) => p.seatNumber));
+    let freeSeat = 1;
+    while (freeSeat <= 9 && currentSeats.has(freeSeat)) {
+      freeSeat++;
+    }
+    if (freeSeat > 9) return;
+
+    const newBot: TablePlayer = {
+      id: freeSeat,
+      seatNumber: freeSeat,
+      name: `Bot #${freeSeat} (${defaultNames[freeSeat]?.split(' ')[0] || 'Player'})`,
+      isUser: false,
+      stack: initialBuyIn,
+      currentBet: 0,
+      cards: [],
+      hasFolded: false,
+      isAllIn: false,
+      hasActed: false,
+    };
+
+    setPlayers((prev) => [...prev, newBot].sort((a, b) => a.seatNumber - b.seatNumber));
+    addLog(`🤖 Bot #${freeSeat} entrou na mesa.`);
+  };
 
   // 1. INICIAR UMA NOVA MÃO
   const startNewHand = () => {
@@ -218,7 +280,11 @@ export const PokerTablePage: React.FC = () => {
   }, [soundEnabled]);
 
   useEffect(() => {
-    startNewHand();
+    if (players.length >= 2) {
+      startNewHand();
+    } else {
+      setStage('WAITING');
+    }
   }, []);
 
   // 2. TEMPORIZADOR DE AÇÃO (Action Timer Clock de 20s)
@@ -566,9 +632,27 @@ export const PokerTablePage: React.FC = () => {
     }, 1000);
   };
 
-  // Saída Graciosa da Mesa
-  const handleConfirmExit = () => {
-    leaveTableSeat(tableId, chosenSeat);
+  const [isExiting, setIsExiting] = useState(false);
+
+  // Saída Graciosa da Mesa com devolução (Cash-Out) de fichas
+  const handleConfirmExit = async () => {
+    if (isExiting) return;
+    setIsExiting(true);
+    const remainingChips = userPlayer ? userPlayer.stack : 0;
+    try {
+      if (token && remainingChips > 0) {
+        const updatedUser = await api.cashOut(token, remainingChips);
+        updateUser(updatedUser);
+      } else if (user && remainingChips > 0) {
+        updateUser({
+          ...user,
+          saldo_fichas: user.saldo_fichas + remainingChips,
+        });
+      }
+      await leaveTableSeatRemote(token, tableId, chosenSeat);
+    } catch (e) {
+      console.warn('Erro ao processar cash-out:', e);
+    }
     const dest = user?.role === 'admin_gerente' || user?.role === 'gerente' ? '/manager' : '/player';
     navigate(dest);
   };
@@ -642,6 +726,7 @@ export const PokerTablePage: React.FC = () => {
         {/* Status da Rua, Histórico e Mute */}
         <div className="flex items-center space-x-2">
           <div className="px-2.5 py-1 bg-zinc-900 border border-zinc-700 rounded-lg text-xs font-bold text-zinc-300 uppercase tracking-widest hidden sm:block">
+            {stage === 'WAITING' && 'SALA DE ESPERA ⏳'}
             {stage === 'PRE_FLOP' && 'PRÉ-FLOP'}
             {stage === 'FLOP' && 'FLOP (3 Cartas)'}
             {stage === 'TURN' && 'TURN (4ª Carta)'}
@@ -695,10 +780,11 @@ export const PokerTablePage: React.FC = () => {
                 CANCELAR
               </button>
               <button
+                disabled={isExiting}
                 onClick={handleConfirmExit}
-                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-xs font-extrabold text-white uppercase tracking-wider transition shadow-lg cursor-pointer"
+                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-xs font-extrabold text-white uppercase tracking-wider transition shadow-lg cursor-pointer disabled:opacity-50"
               >
-                SIM, SAIR
+                {isExiting ? 'CASH-OUT...' : 'SIM, SAIR'}
               </button>
             </div>
           </div>
@@ -768,6 +854,44 @@ export const PokerTablePage: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">
                 Próxima mão iniciando em {countdownNextHand}s...
               </p>
+            </div>
+          )}
+
+          {/* Sala de Espera / Aguardando Jogadores */}
+          {stage === 'WAITING' && (
+            <div className="absolute top-1/2 -translate-y-1/2 bg-black/95 border-2 border-[#d4af37]/80 px-6 py-4 rounded-2xl text-center shadow-[0_0_40px_rgba(0,0,0,0.9)] z-20 space-y-3 max-w-sm">
+              <div>
+                <p className="text-sm font-black text-[#f5d77f] uppercase tracking-wider">
+                  Mesa Criada / Aguardando
+                </p>
+                <p className="text-xs text-zinc-300 mt-1">
+                  {players.length === 1
+                    ? 'Há apenas 1 jogador na mesa. São necessários ao menos 2 jogadores para iniciar.'
+                    : `${players.length} jogadores prontos para jogar.`}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-1">
+                {players.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => startNewHand()}
+                    className="w-full py-2.5 rounded-xl gold-btn text-black font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-lg hover:scale-105 transition"
+                  >
+                    ▶️ INICIAR PARTIDA AGORA
+                  </button>
+                )}
+
+                {players.length < 9 && (
+                  <button
+                    type="button"
+                    onClick={handleAddBotToTable}
+                    className="w-full py-2 rounded-xl bg-zinc-900 border border-[#d4af37]/60 hover:bg-zinc-800 text-[#f5d77f] font-bold text-xs uppercase tracking-wider cursor-pointer transition"
+                  >
+                    🤖 ADICIONAR BOT DE TREINO
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

@@ -50,7 +50,10 @@ type PokerTable struct {
 	CommunityCards []Card      `json:"community_cards"`
 	CurrentDealer  int         `json:"current_dealer"`
 	CurrentTurn    int         `json:"current_turn"`
-	DeckState      []Card      `json:"-"` // Memória física persistida entre mãos
+	BotSeats       []int       `json:"bot_seats"`
+	OccupiedSeats  []int       `json:"occupied_seats"`
+	Password       string      `json:"password,omitempty"`
+	CreatedBy      string      `json:"created_by"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 }

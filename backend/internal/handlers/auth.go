@@ -200,3 +200,26 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 	response.JSON(w, http.StatusOK, user)
 }
+
+func (h *AuthHandler) GetUserByEmail(email string) (*models.User, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	u, exists := h.users[email]
+	return u, exists
+}
+
+func (h *AuthHandler) UpdateChips(email string, delta int64) (*models.User, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	u, exists := h.users[email]
+	if !exists {
+		return nil, false
+	}
+	u.SaldoFichas += delta
+	if u.SaldoFichas < 0 {
+		u.SaldoFichas = 0
+	}
+	u.UpdatedAt = time.Now()
+	return u, true
+}
+

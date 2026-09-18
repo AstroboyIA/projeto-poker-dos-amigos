@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users, Bot } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
-import { getTableRoomById, occupyTableSeat } from '../utils/tableRooms';
+import { getTableRoomById, occupyTableSeatRemote } from '../utils/tableRooms';
+import { api } from '../services/api';
 
 interface SeatInfo {
   seatNumber: number;
@@ -17,7 +18,7 @@ interface SeatInfo {
 type SeatMode = 'bot' | 'open';
 
 export const SeatSelectionPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, token, updateUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tableId = searchParams.get('tableId') || 'mesa-vip-01';
@@ -34,6 +35,8 @@ export const SeatSelectionPage: React.FC = () => {
   const [buyInAmount, setBuyInAmount] = useState<number>(defaultBuyIn);
   const [autoPostBlinds, setAutoPostBlinds] = useState<boolean>(true);
   const [autoRebuy, setAutoRebuy] = useState<boolean>(false);
+  const [entering, setEntering] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [seatModes, setSeatModes] = useState<Record<number, SeatMode>>({
     1: room?.botSeats.includes(1) ? 'bot' : 'open',
     2: room?.botSeats.includes(2) ? 'bot' : 'open',
@@ -94,15 +97,40 @@ export const SeatSelectionPage: React.FC = () => {
     }
   };
 
-  const handleConfirmAndEnter = () => {
-    if (!selectedSeat) return;
-    const botSeats = seats
-      .filter((seat) => !seat.isOccupied && seat.seatNumber !== selectedSeat && seatModes[seat.seatNumber] === 'bot')
-      .map((seat) => seat.seatNumber)
-      .join(',');
+  const handleConfirmAndEnter = async () => {
+    if (!selectedSeat || entering) return;
+    setErrorMessage(null);
 
-    occupyTableSeat(tableId, selectedSeat);
-    navigate(`/table/live?tableId=${tableId}&seat=${selectedSeat}&buyIn=${buyInAmount}&bots=${botSeats}`);
+    // Validação de saldo de fichas
+    if (user && user.saldo_fichas < buyInAmount) {
+      setErrorMessage(`Saldo insuficiente (${user.saldo_fichas} fichas). O buy-in escolhido é de ${buyInAmount} fichas.`);
+      return;
+    }
+
+    setEntering(true);
+    try {
+      if (token) {
+        const updatedUser = await api.buyIn(token, buyInAmount);
+        updateUser(updatedUser);
+      } else if (user) {
+        updateUser({
+          ...user,
+          saldo_fichas: Math.max(0, user.saldo_fichas - buyInAmount),
+        });
+      }
+
+      await occupyTableSeatRemote(token, tableId, selectedSeat);
+
+      const botSeats = seats
+        .filter((seat) => !seat.isOccupied && seat.seatNumber !== selectedSeat && seatModes[seat.seatNumber] === 'bot')
+        .map((seat) => seat.seatNumber)
+        .join(',');
+
+      navigate(`/table/live?tableId=${tableId}&seat=${selectedSeat}&buyIn=${buyInAmount}&bots=${botSeats}`);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Falha ao realizar buy-in ou entrar na mesa');
+      setEntering(false);
+    }
   };
 
   const openSeatsCount = seats.filter((s) => !s.isOccupied && seatModes[s.seatNumber] !== 'bot').length;
@@ -329,17 +357,29 @@ export const SeatSelectionPage: React.FC = () => {
               <span>Máximo: ${buyInMax}</span>
             </div>
 
+            {errorMessage && (
+              <div className="p-2.5 rounded-lg bg-red-950/80 border border-red-500 text-xs text-red-200">
+                {errorMessage}
+              </div>
+            )}
+
             {/* Botão de Confirmação */}
             <button
               onClick={handleConfirmAndEnter}
-              disabled={!selectedSeat}
+              disabled={!selectedSeat || entering}
               className={`w-full py-3.5 rounded-xl font-extrabold text-xs uppercase tracking-widest transition cursor-pointer flex items-center justify-center space-x-2 ${
-                selectedSeat
+                selectedSeat && !entering
                   ? 'gold-btn text-black'
                   : 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed'
               }`}
             >
-              <span>{selectedSeat ? 'CONFIRMAR ASSENTO E ENTRAR NA MESA' : 'ESCOLHA UM ASSENTO (1 A 9) PARA CONTINUAR'}</span>
+              <span>
+                {entering
+                  ? 'PROCESSANDO BUY-IN...'
+                  : selectedSeat
+                  ? 'CONFIRMAR ASSENTO E ENTRAR NA MESA'
+                  : 'ESCOLHA UM ASSENTO (1 A 9) PARA CONTINUAR'}
+              </span>
             </button>
           </div>
         </div>

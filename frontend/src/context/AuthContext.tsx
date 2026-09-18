@@ -7,6 +7,8 @@ interface AuthContextType {
   token: string | null;
   login: (token: string, user: User) => void;
   logout: () => void;
+  updateUser: (user: User) => void;
+  refreshUser: () => Promise<void>;
   loading: boolean;
 }
 
@@ -49,8 +51,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
+  const updateUser = (updated: User) => {
+    setUser(updated);
+  };
+
+  const refreshUser = async () => {
+    if (!token) return;
+    try {
+      const freshData = await api.getMe(token);
+      setUser(freshData);
+    } catch {
+      // Ignora erro de refresh em background
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, updateUser, refreshUser, loading }}>
       {children}
     </AuthContext.Provider>
   );

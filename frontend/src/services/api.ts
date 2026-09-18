@@ -66,6 +66,88 @@ export const api = {
     return data.data || [];
   },
 
+  async createTable(
+    token: string,
+    params: {
+      nome: string;
+      small_blind: number;
+      big_blind: number;
+      buy_in_min: number;
+      buy_in_max: number;
+      max_seats: number;
+      bot_seats: number[];
+      occupied_seats: number[];
+      password?: string;
+    }
+  ): Promise<PokerTable> {
+    const res = await fetch(`${API_BASE}/tables`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao criar mesa');
+    return data.data;
+  },
+
+  async occupySeat(token: string, tableId: string, seatNumber: number): Promise<PokerTable> {
+    const res = await fetch(`${API_BASE}/tables/occupy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ table_id: tableId, seat_number: seatNumber }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao ocupar assento');
+    return data.data;
+  },
+
+  async leaveSeat(token: string, tableId: string, seatNumber: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/tables/leave`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ table_id: tableId, seat_number: seatNumber }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao desocupar assento');
+  },
+
+  async buyIn(token: string, amount: number): Promise<User> {
+    const res = await fetch(`${API_BASE}/chips/buy-in`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ amount }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Saldo insuficiente ou falha no buy-in');
+    return data.data;
+  },
+
+  async cashOut(token: string, amount: number): Promise<User> {
+    const res = await fetch(`${API_BASE}/chips/cash-out`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ amount }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha no cash-out');
+    return data.data;
+  },
+
   async getAnnouncements(token: string): Promise<Announcement[]> {
     const res = await fetch(`${API_BASE}/announcements`, {
       headers: { Authorization: `Bearer ${token}` },

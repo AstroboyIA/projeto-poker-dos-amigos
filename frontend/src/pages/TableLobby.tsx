@@ -1,23 +1,81 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bot, CheckCircle2, Coins, Lock, Plus, ShieldCheck, Unlock, Users, X } from 'lucide-react';
+import { ArrowLeft, Bot, CheckCircle2, Coins, Lock, Plus, ShieldCheck, Unlock, Users, X, RefreshCw } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
-import { countAvailableSeats, createTableRoom, getTableRooms, type SeatMode, type TableRoom } from '../utils/tableRooms';
+import {
+  countAvailableSeats,
+  createRemoteTable,
+  fetchRemoteTables,
+  getCachedTableRooms,
+  pokerTableToRoom,
+  saveCachedTableRooms,
+  type SeatMode,
+  type TableRoom,
+} from '../utils/tableRooms';
+import type { PokerTable } from '../types';
 
 const seats = Array.from({ length: 9 }, (_, idx) => idx + 1);
 
 export const TableLobbyPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
-  const [tables, setTables] = useState<TableRoom[]>(() => getTableRooms());
+  const [tables, setTables] = useState<TableRoom[]>(() => getCachedTableRooms());
+  const [loadingTables, setLoadingTables] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [lockedTable, setLockedTable] = useState<TableRoom | null>(null);
   const [passwordAttempt, setPasswordAttempt] = useState('');
   const [passwordError, setPasswordError] = useState('');
 
+  const loadTables = useCallback(async () => {
+    setLoadingTables(true);
+    try {
+      const remote = await fetchRemoteTables(token);
+      setTables(remote);
+    } finally {
+      setLoadingTables(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadTables();
+  }, [loadTables]);
+
+  // WebSocket para sincronizar criação/alteração de mesas em tempo real
+  useEffect(() => {
+    const wsUrl = (import.meta.env.VITE_API_BASE_URL || window.location.origin)
+      .replace(/^http/, 'ws')
+      + `/ws?token=${token || ''}`;
+
+    let socket: WebSocket | null = null;
+    try {
+      socket = new WebSocket(wsUrl);
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'TABLES_UPDATED' && msg.payload) {
+            const rawTables: PokerTable[] = JSON.parse(
+              typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload)
+            );
+            const rooms = rawTables.map(pokerTableToRoom);
+            saveCachedTableRooms(rooms);
+            setTables(rooms);
+          }
+        } catch {
+          // Ignora mensagens de chat ou outros tipos
+        }
+      };
+    } catch {
+      // Ignora erro de conexão WS se offline
+    }
+
+    return () => {
+      if (socket) socket.close();
+    };
+  }, [token]);
+
   const visibleTables = useMemo(
-    () => tables.filter((table) => table.occupiedSeats.length > 0 && countAvailableSeats(table) > 0),
+    () => tables.filter((table) => countAvailableSeats(table) > 0),
     [tables]
   );
 
@@ -47,9 +105,8 @@ export const TableLobbyPage: React.FC = () => {
   };
 
   const handleCreated = (table: TableRoom) => {
-    setTables(getTableRooms());
     setShowCreate(false);
-    navigate(`/table/live?tableId=${table.id}&seat=1&buyIn=${table.buyInMin}&bots=${table.botSeats.join(',')}`);
+    navigate(`/table/select-seat?tableId=${table.id}`);
   };
 
   return (
@@ -63,13 +120,25 @@ export const TableLobbyPage: React.FC = () => {
           <span>VOLTAR</span>
         </button>
 
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg gold-btn text-black text-xs font-extrabold uppercase tracking-wider cursor-pointer"
-        >
-          <Plus size={16} />
-          <span>Criar Mesa</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadTables()}
+            disabled={loadingTables}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 border border-[#d4af37]/40 hover:bg-zinc-800 text-[#d4af37] text-xs font-bold transition cursor-pointer"
+            title="Atualizar Mesas"
+          >
+            <RefreshCw size={14} className={loadingTables ? 'animate-spin' : ''} />
+            <span>ATUALIZAR</span>
+          </button>
+
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg gold-btn text-black text-xs font-extrabold uppercase tracking-wider cursor-pointer"
+          >
+            <Plus size={16} />
+            <span>Criar Mesa</span>
+          </button>
+        </div>
       </div>
 
       <div className="text-center space-y-2">
@@ -144,7 +213,7 @@ export const TableLobbyPage: React.FC = () => {
       {visibleTables.length === 0 && (
         <div className="poker-card-frame rounded-xl p-8 text-center space-y-3">
           <ShieldCheck className="w-10 h-10 text-[#d4af37] mx-auto" />
-          <p className="text-sm font-bold text-zinc-200">Nenhuma mesa com jogadores ativos no momento.</p>
+          <p className="text-sm font-bold text-zinc-200">Nenhuma mesa disponível no momento.</p>
           <button
             onClick={() => setShowCreate(true)}
             className="px-5 py-2.5 rounded-lg gold-btn text-black text-xs font-extrabold uppercase tracking-wider cursor-pointer"
@@ -154,7 +223,14 @@ export const TableLobbyPage: React.FC = () => {
         </div>
       )}
 
-      {showCreate && <CreateTableModal onClose={() => setShowCreate(false)} onCreated={handleCreated} createdBy={user?.nome_completo || 'Jogador'} />}
+      {showCreate && (
+        <CreateTableModal
+          onClose={() => setShowCreate(false)}
+          onCreated={handleCreated}
+          token={token}
+          createdBy={user?.nome_completo || 'Jogador'}
+        />
+      )}
 
       {lockedTable && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
@@ -193,14 +269,16 @@ const InfoTile: React.FC<{ icon: React.ReactNode; label: string; value: string }
 const CreateTableModal: React.FC<{
   onClose: () => void;
   onCreated: (table: TableRoom) => void;
+  token: string | null;
   createdBy: string;
-}> = ({ onClose, onCreated, createdBy }) => {
+}> = ({ onClose, onCreated, token, createdBy }) => {
   const [name, setName] = useState('Nova Mesa Cash Game');
   const [smallBlind, setSmallBlind] = useState(25);
   const [bigBlind, setBigBlind] = useState(50);
   const [buyInMin, setBuyInMin] = useState(1000);
   const [buyInMax, setBuyInMax] = useState(5000);
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [seatModes, setSeatModes] = useState<Record<number, SeatMode>>({
     2: 'bot',
     3: 'open',
@@ -215,21 +293,27 @@ const CreateTableModal: React.FC<{
   const botSeats = seats.filter((seat) => seat !== 1 && seatModes[seat] === 'bot');
   const openSeats = seats.filter((seat) => seat !== 1 && seatModes[seat] !== 'bot');
 
-  const handleCreate = () => {
-    const table = createTableRoom({
-      name: name.trim() || 'Mesa sem nome',
-      smallBlind,
-      bigBlind,
-      buyInMin,
-      buyInMax,
-      maxSeats: 9,
-      botSeats,
-      occupiedSeats: [1],
-      password: password.trim() || undefined,
-      createdBy,
-    });
+  const handleCreate = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const table = await createRemoteTable(token || '', {
+        name: name.trim() || 'Mesa sem nome',
+        smallBlind,
+        bigBlind,
+        buyInMin,
+        buyInMax,
+        maxSeats: 9,
+        botSeats,
+        occupiedSeats: [1],
+        password: password.trim() || undefined,
+        createdBy,
+      });
 
-    onCreated(table);
+      onCreated(table);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
