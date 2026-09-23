@@ -74,3 +74,61 @@ export interface Announcement {
   publicado: boolean;
   created_at: string;
 }
+
+export type GameStage = 'WAITING' | 'DEALING' | 'PRE_FLOP' | 'FLOP' | 'TURN' | 'RIVER' | 'SHOWDOWN' | 'HAND_OVER';
+
+export interface ServerPlayerInfo {
+  id: number;
+  seat_number: number;
+  user_id?: string;
+  name: string;
+  is_bot: boolean;
+  stack: number;
+  current_bet: number;
+  card_count: number;
+  cards?: Card[];
+  has_folded: boolean;
+  is_all_in: boolean;
+  has_acted: boolean;
+  last_action?: string;
+  is_dealer: boolean;
+  is_small_blind: boolean;
+  is_big_blind: boolean;
+  hand_eval?: {
+    rank: number;
+    rank_name: string;
+    score: number;
+    description: string;
+  };
+}
+
+export interface ServerTableState {
+  table_id: string;
+  stage: GameStage;
+  hand_number: number;
+  pot: number;
+  current_round_bet: number;
+  current_turn_idx: number;
+  dealer_idx: number;
+  small_blind: number;
+  big_blind: number;
+  community_cards: Card[];
+  players: ServerPlayerInfo[];
+  winner_message?: string;
+}
+
+export interface JoinTablePayload {
+  table_id: string;
+  seat_number: number;
+  buy_in: number;
+}
+
+export interface PlayerActionPayload {
+  action: 'FOLD' | 'CHECK' | 'CALL' | 'RAISE' | 'ALL_IN';
+  amount?: number;
+}
+
+export interface PrivateCardsPayload {
+  cards: Card[];
+}
+

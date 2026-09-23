@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/config"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/engine"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/handlers"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/ws"
 )
@@ -19,7 +20,8 @@ func main() {
 	cfg := config.LoadConfig()
 
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
-	hub := ws.NewHub()
+	gameService := engine.NewGameService()
+	hub := ws.NewHub(gameService)
 	go hub.Run()
 
 	authHandler := handlers.NewAuthHandler(tokenManager)

@@ -12,7 +12,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import type { Card } from '../types';
+import type { Card, ServerTableState, PrivateCardsPayload } from '../types';
 import {
   shuffleContinuousDeck,
   evaluate7Cards,
@@ -28,8 +28,10 @@ type GameStage = 'WAITING' | 'DEALING' | 'PRE_FLOP' | 'FLOP' | 'TURN' | 'RIVER' 
 interface TablePlayer {
   id: number;
   seatNumber: number;
+  userId?: string;
   name: string;
   isUser: boolean;
+  isBot?: boolean;
   stack: number;
   currentBet: number;
   cards: Card[];
@@ -275,17 +277,148 @@ export const PokerTablePage: React.FC = () => {
     addLog(`Vez de agir: ${updatedPlayers[firstToActIdx].name}`);
   };
 
+  const [isMultiplayerMode, setIsMultiplayerMode] = useState<boolean>(true);
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [ownCards, setOwnCards] = useState<Card[]>([]);
+  const [isWaitingForAction, setIsWaitingForAction] = useState<boolean>(false);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // WebSocket Integration para Multiplayer Autoritativo
+  useEffect(() => {
+    const wsUrl = (import.meta.env.VITE_API_BASE_URL || window.location.origin)
+      .replace(/^http/, 'ws')
+      + `/ws?token=${token || ''}`;
+
+    let socket: WebSocket | null = null;
+    let isMounted = true;
+
+    try {
+      socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+
+      socket.onopen = () => {
+        if (!isMounted) return;
+        setWsConnected(true);
+        addLog('Conectado ao servidor multiplayer via WebSocket.');
+
+        // Envia JOIN_TABLE
+        const joinMsg = {
+          type: 'JOIN_TABLE',
+          payload: {
+            table_id: tableId,
+            seat_number: chosenSeat,
+            buy_in: initialBuyIn,
+          },
+        };
+        socket?.send(JSON.stringify(joinMsg));
+      };
+
+      socket.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === 'TABLE_STATE' && msg.payload) {
+            const serverState: ServerTableState = msg.payload;
+            handleTableStateUpdate(serverState);
+          } else if (msg.type === 'PRIVATE_CARDS' && msg.payload) {
+            const privatePayload: PrivateCardsPayload = msg.payload;
+            if (privatePayload.cards && privatePayload.cards.length > 0) {
+              setOwnCards(privatePayload.cards);
+              triggerCardSound();
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao processar mensagem WS:', err);
+        }
+      };
+
+      socket.onerror = (e) => {
+        console.warn('Erro na conexão WebSocket da mesa:', e);
+      };
+
+      socket.onclose = () => {
+        if (!isMounted) return;
+        setWsConnected(false);
+        addLog('Conexão WebSocket com o servidor encerrada.');
+      };
+    } catch (err) {
+      console.warn('Falha ao instanciar WebSocket:', err);
+      setIsMultiplayerMode(false);
+    }
+
+    return () => {
+      isMounted = false;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'LEAVE_TABLE' }));
+        socket.close();
+      }
+      wsRef.current = null;
+    };
+  }, [tableId, chosenSeat, initialBuyIn, token]);
+
+  const handleTableStateUpdate = (serverState: ServerTableState) => {
+    setIsWaitingForAction(false);
+    setStage(serverState.stage);
+    setHandNumber(serverState.hand_number);
+    setPot(serverState.pot);
+    setCurrentRoundBet(serverState.current_round_bet);
+    setCurrentTurnIdx(serverState.current_turn_idx);
+    setDealerIdx(serverState.dealer_idx);
+    setCommunityCards(serverState.community_cards || []);
+    if (serverState.winner_message) {
+      setWinnerMessage(serverState.winner_message);
+      if (soundEnabled) soundFX.playWinFanfare();
+    } else {
+      setWinnerMessage(null);
+    }
+
+    // Mapeia jogadores do servidor para o TablePlayer local
+    const mappedPlayers: TablePlayer[] = serverState.players.map((sp) => {
+      const isCurrentUser = sp.user_id === user?.id || sp.seat_number === chosenSeat;
+      return {
+        id: sp.id,
+        seatNumber: sp.seat_number,
+        userId: sp.user_id,
+        name: isCurrentUser ? `${user?.nome_completo || 'Você'} (VIP)` : sp.name,
+        isUser: isCurrentUser,
+        isBot: sp.is_bot,
+        stack: sp.stack,
+        currentBet: sp.current_bet,
+        cards: sp.cards || [],
+        hasFolded: sp.has_folded,
+        isAllIn: sp.is_all_in,
+        hasActed: sp.has_acted,
+        lastAction: sp.last_action,
+        isDealer: sp.is_dealer,
+        isSmallBlind: sp.is_small_blind,
+        isBigBlind: sp.is_big_blind,
+        handEval: sp.hand_eval ? {
+          rank: sp.hand_eval.rank,
+          rankName: sp.hand_eval.rank_name,
+          score: sp.hand_eval.score,
+          description: sp.hand_eval.description,
+        } : undefined,
+      };
+    });
+
+    setPlayers(mappedPlayers);
+    setActionTimer(MAX_ACTION_TIME);
+  };
+
   useEffect(() => {
     soundFX.enabled = soundEnabled;
   }, [soundEnabled]);
 
   useEffect(() => {
-    if (players.length >= 2) {
-      startNewHand();
-    } else {
-      setStage('WAITING');
+    if (!isMultiplayerMode) {
+      if (players.length >= 2) {
+        startNewHand();
+      } else {
+        setStage('WAITING');
+      }
     }
-  }, []);
+  }, [isMultiplayerMode]);
 
   // 2. TEMPORIZADOR DE AÇÃO (Action Timer Clock de 20s)
   useEffect(() => {
@@ -294,7 +427,9 @@ export const PokerTablePage: React.FC = () => {
     const interval = setInterval(() => {
       setActionTimer((prev) => {
         if (prev <= 1) {
-          handleAutoTimeoutAction();
+          if (!isMultiplayerMode) {
+            handleAutoTimeoutAction();
+          }
           return MAX_ACTION_TIME;
         }
         return prev - 1;
@@ -302,7 +437,7 @@ export const PokerTablePage: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentTurnIdx, stage, players]);
+  }, [currentTurnIdx, stage, players, isMultiplayerMode]);
 
   const handleAutoTimeoutAction = () => {
     const activePlayer = players[currentTurnIdx];
@@ -316,8 +451,10 @@ export const PokerTablePage: React.FC = () => {
   };
 
   // 3. FLUXO DE INTELIGÊNCIA / RESPOSTA DE BOTS
+  // Em modo multiplayer, o frontend NUNCA simula ações para outros jogadores humanos
   useEffect(() => {
     if (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'DEALING') return;
+    if (isMultiplayerMode) return; // No multiplayer o backend é autoritativo
 
     const activePlayer = players[currentTurnIdx];
     if (!activePlayer) return;
@@ -362,10 +499,23 @@ export const PokerTablePage: React.FC = () => {
 
       return () => clearTimeout(timer);
     }
-  }, [currentTurnIdx, stage, currentRoundBet]);
+  }, [currentTurnIdx, stage, currentRoundBet, isMultiplayerMode]);
 
   // 4. EXECUÇÃO DE AÇÕES DE UM JOGADOR
   const handlePlayerAction = (action: 'FOLD' | 'CHECK' | 'CALL' | 'RAISE' | 'ALL_IN', customAmount?: number) => {
+    if (isMultiplayerMode && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      setIsWaitingForAction(true);
+      const actionMsg = {
+        type: 'PLAYER_ACTION',
+        payload: {
+          action,
+          amount: action === 'RAISE' ? (customAmount || raiseAmount) : undefined,
+        },
+      };
+      wsRef.current.send(JSON.stringify(actionMsg));
+      return;
+    }
+
     const updated = [...players];
     const player = updated[currentTurnIdx];
     if (!player || player.hasFolded || player.isAllIn) return;
@@ -626,8 +776,10 @@ export const PokerTablePage: React.FC = () => {
       setCountdownNextHand(timeLeft);
       if (timeLeft <= 0) {
         clearInterval(timer);
-        setHandNumber((h) => h + 1);
-        startNewHand();
+        if (!isMultiplayerMode) {
+          setHandNumber((h) => h + 1);
+          startNewHand();
+        }
       }
     }, 1000);
   };
@@ -640,6 +792,9 @@ export const PokerTablePage: React.FC = () => {
     setIsExiting(true);
     const remainingChips = userPlayer ? userPlayer.stack : 0;
     try {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'LEAVE_TABLE' }));
+      }
       if (token && remainingChips > 0) {
         const updatedUser = await api.cashOut(token, remainingChips);
         updateUser(updatedUser);
@@ -678,8 +833,12 @@ export const PokerTablePage: React.FC = () => {
   const toCallAmount = userPlayer ? Math.max(0, currentRoundBet - userPlayer.currentBet) : 0;
   const canCheck = toCallAmount === 0;
 
-  const userHandEval = userPlayer && userPlayer.cards.length === 2 && communityCards.length >= 3
-    ? evaluate7Cards([...userPlayer.cards, ...communityCards])
+  const effectiveUserCards = (isMultiplayerMode && ownCards.length === 2)
+    ? ownCards
+    : (userPlayer?.cards || []);
+
+  const userHandEval = effectiveUserCards.length === 2 && communityCards.length >= 3
+    ? evaluate7Cards([...effectiveUserCards, ...communityCards])
     : null;
 
   // Mapeamento das 9 Posições da Mesa
@@ -718,7 +877,7 @@ export const PokerTablePage: React.FC = () => {
               </span>
             </div>
             <p className="text-[10px] text-zinc-400">
-              Blinds: <span className="text-zinc-200 font-bold">${smallBlindVal}/${bigBlindVal}</span> • Seu Assento: #{chosenSeat} • {players.length} Jogadores • Turno: 20s
+              Blinds: <span className="text-zinc-200 font-bold">${smallBlindVal}/${bigBlindVal}</span> • Seu Assento: #{chosenSeat} • {players.length} Jogadores • {wsConnected ? <span className="text-emerald-400 font-bold">● Online</span> : <span className="text-amber-400 font-bold">○ Conectando</span>}
             </p>
           </div>
         </div>
@@ -1004,10 +1163,10 @@ export const PokerTablePage: React.FC = () => {
           <div className="flex items-center space-x-3 sm:space-x-4 w-full sm:w-auto">
             {/* Suas 2 Cartas Fechadas */}
             <div className="flex space-x-1.5 flex-shrink-0">
-              {userPlayer && userPlayer.cards.length === 2 ? (
+              {effectiveUserCards && effectiveUserCards.length === 2 ? (
                 <>
-                  <CardView card={userPlayer.cards[0]} />
-                  <CardView card={userPlayer.cards[1]} />
+                  <CardView card={effectiveUserCards[0]} />
+                  <CardView card={effectiveUserCards[1]} />
                 </>
               ) : (
                 <>
@@ -1062,10 +1221,10 @@ export const PokerTablePage: React.FC = () => {
           <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
             {/* FOLD */}
             <button
-              disabled={!isUserTurn || userPlayer?.hasFolded}
+              disabled={!isUserTurn || userPlayer?.hasFolded || isWaitingForAction}
               onClick={() => handlePlayerAction('FOLD')}
               className={`px-3.5 py-2 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
-                isUserTurn && !userPlayer?.hasFolded
+                isUserTurn && !userPlayer?.hasFolded && !isWaitingForAction
                   ? 'bg-red-950 hover:bg-red-900 border border-red-500 text-red-200 shadow-md'
                   : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'
               }`}
@@ -1076,10 +1235,10 @@ export const PokerTablePage: React.FC = () => {
             {/* CHECK ou CALL */}
             {canCheck ? (
               <button
-                disabled={!isUserTurn || userPlayer?.hasFolded}
+                disabled={!isUserTurn || userPlayer?.hasFolded || isWaitingForAction}
                 onClick={() => handlePlayerAction('CHECK')}
                 className={`px-4 py-2 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
-                  isUserTurn && !userPlayer?.hasFolded
+                  isUserTurn && !userPlayer?.hasFolded && !isWaitingForAction
                     ? 'bg-blue-950 hover:bg-blue-900 border border-blue-500 text-blue-200 shadow-md'
                     : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'
                 }`}
@@ -1088,10 +1247,10 @@ export const PokerTablePage: React.FC = () => {
               </button>
             ) : (
               <button
-                disabled={!isUserTurn || userPlayer?.hasFolded}
+                disabled={!isUserTurn || userPlayer?.hasFolded || isWaitingForAction}
                 onClick={() => handlePlayerAction('CALL')}
                 className={`px-4 py-2 sm:py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
-                  isUserTurn && !userPlayer?.hasFolded
+                  isUserTurn && !userPlayer?.hasFolded && !isWaitingForAction
                     ? 'bg-emerald-950 hover:bg-emerald-900 border border-emerald-500 text-emerald-200 shadow-md'
                     : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'
                 }`}
@@ -1104,7 +1263,7 @@ export const PokerTablePage: React.FC = () => {
             <div className="flex items-center space-x-1.5">
               <input
                 type="number"
-                disabled={!isUserTurn || userPlayer?.hasFolded}
+                disabled={!isUserTurn || userPlayer?.hasFolded || isWaitingForAction}
                 value={raiseAmount}
                 onChange={(e) => setRaiseAmount(Number(e.target.value))}
                 min={currentRoundBet + bigBlindVal}
@@ -1112,10 +1271,10 @@ export const PokerTablePage: React.FC = () => {
                 className="w-16 sm:w-20 bg-zinc-900 border border-[#d4af37]/50 rounded-lg px-2 py-1.5 text-xs text-center font-mono text-white disabled:opacity-40"
               />
               <button
-                disabled={!isUserTurn || userPlayer?.hasFolded || (userPlayer?.stack || 0) < raiseAmount}
+                disabled={!isUserTurn || userPlayer?.hasFolded || (userPlayer?.stack || 0) < raiseAmount || isWaitingForAction}
                 onClick={() => handlePlayerAction('RAISE')}
                 className={`px-4 py-2 sm:py-2.5 rounded-lg font-extrabold text-xs uppercase tracking-wider transition cursor-pointer flex items-center gap-1 ${
-                  isUserTurn && !userPlayer?.hasFolded
+                  isUserTurn && !userPlayer?.hasFolded && !isWaitingForAction
                     ? 'gold-btn text-black'
                     : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'
                 }`}
@@ -1127,10 +1286,10 @@ export const PokerTablePage: React.FC = () => {
 
             {/* ALL-IN */}
             <button
-              disabled={!isUserTurn || userPlayer?.hasFolded || (userPlayer?.stack || 0) === 0}
+              disabled={!isUserTurn || userPlayer?.hasFolded || (userPlayer?.stack || 0) === 0 || isWaitingForAction}
               onClick={() => handlePlayerAction('ALL_IN')}
               className={`px-3 py-2 sm:py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition cursor-pointer flex items-center gap-1 ${
-                isUserTurn && !userPlayer?.hasFolded
+                isUserTurn && !userPlayer?.hasFolded && !isWaitingForAction
                   ? 'bg-amber-600 hover:bg-amber-500 text-black shadow-lg'
                   : 'bg-zinc-900 border border-zinc-800 text-zinc-600 cursor-not-allowed'
               }`}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/engine"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
 )
 
 var upgrader = websocket.Upgrader{
@@ -22,13 +24,14 @@ var upgrader = websocket.Upgrader{
 type MessageType string
 
 const (
-	MsgJoinTable   MessageType = "JOIN_TABLE"
-	MsgLeaveTable  MessageType = "LEAVE_TABLE"
-	MsgPlayerAct   MessageType = "PLAYER_ACTION"
-	MsgTableState  MessageType = "TABLE_STATE"
-	MsgChatMessage MessageType = "CHAT_MESSAGE"
-	MsgPing        MessageType = "PING"
-	MsgPong        MessageType = "PONG"
+	MsgJoinTable    MessageType = "JOIN_TABLE"
+	MsgLeaveTable   MessageType = "LEAVE_TABLE"
+	MsgPlayerAct    MessageType = "PLAYER_ACTION"
+	MsgTableState   MessageType = "TABLE_STATE"
+	MsgPrivateCards MessageType = "PRIVATE_CARDS"
+	MsgChatMessage  MessageType = "CHAT_MESSAGE"
+	MsgPing         MessageType = "PING"
+	MsgPong         MessageType = "PONG"
 )
 
 type WSMessage struct {
@@ -39,31 +42,48 @@ type WSMessage struct {
 	Timestamp int64           `json:"timestamp"`
 }
 
+type JoinTablePayload struct {
+	TableID    string `json:"table_id"`
+	SeatNumber int    `json:"seat_number"`
+	BuyIn      int64  `json:"buy_in"`
+}
+
+type PlayerActionPayload struct {
+	Action string `json:"action"`
+	Amount int64  `json:"amount,omitempty"`
+}
+
+type PrivateCardsPayload struct {
+	Cards []models.Card `json:"cards"`
+}
+
 type Client struct {
-	Hub      *Hub
-	Conn     *websocket.Conn
-	Send     chan []byte
-	UserID   uuid.UUID
-	Nome     string
-	TableID  *uuid.UUID
+	Hub     *Hub
+	Conn    *websocket.Conn
+	Send    chan []byte
+	UserID  uuid.UUID
+	Nome    string
+	TableID *uuid.UUID
 }
 
 type Hub struct {
-	clients    map[*Client]bool
-	tables     map[uuid.UUID]map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	clients     map[*Client]bool
+	tables      map[uuid.UUID]map[*Client]bool
+	broadcast   chan []byte
+	register    chan *Client
+	unregister  chan *Client
+	gameService *engine.GameService
+	mu          sync.RWMutex
 }
 
-func NewHub() *Hub {
+func NewHub(gameService *engine.GameService) *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		tables:     make(map[uuid.UUID]map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:     make(map[*Client]bool),
+		tables:      make(map[uuid.UUID]map[*Client]bool),
+		broadcast:   make(chan []byte),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
+		gameService: gameService,
 	}
 }
 
@@ -82,10 +102,18 @@ func (h *Hub) Run() {
 				delete(h.clients, client)
 				close(client.Send)
 				if client.TableID != nil {
-					if tbl, exists := h.tables[*client.TableID]; exists {
+					tid := *client.TableID
+					if tbl, exists := h.tables[tid]; exists {
 						delete(tbl, client)
 						if len(tbl) == 0 {
-							delete(h.tables, *client.TableID)
+							delete(h.tables, tid)
+						}
+					}
+					// Notifica GameService da saída
+					if h.gameService != nil {
+						if table, ok := h.gameService.GetTable(tid); ok {
+							table.LeavePlayer(client.UserID)
+							go h.broadcastCurrentTableState(tid, table)
 						}
 					}
 				}
@@ -123,6 +151,62 @@ func (h *Hub) BroadcastToTable(tableID uuid.UUID, message []byte) {
 			default:
 				close(client.Send)
 				delete(clients, client)
+			}
+		}
+	}
+}
+
+func (h *Hub) BroadcastTableState(tableID uuid.UUID, state engine.TableStatePayload) {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	msg, err := json.Marshal(WSMessage{
+		Type:      MsgTableState,
+		TableID:   &tableID,
+		Payload:   payload,
+		Timestamp: time.Now().Unix(),
+	})
+	if err == nil {
+		h.BroadcastToTable(tableID, msg)
+	}
+}
+
+func (h *Hub) SendPrivateCardsToUser(tableID uuid.UUID, userID uuid.UUID, cards []models.Card) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if clients, ok := h.tables[tableID]; ok {
+		for client := range clients {
+			if client.UserID == userID {
+				payload, _ := json.Marshal(PrivateCardsPayload{Cards: cards})
+				msg, _ := json.Marshal(WSMessage{
+					Type:      MsgPrivateCards,
+					TableID:   &tableID,
+					UserID:    &userID,
+					Payload:   payload,
+					Timestamp: time.Now().Unix(),
+				})
+				select {
+				case client.Send <- msg:
+				default:
+				}
+				break
+			}
+		}
+	}
+}
+
+func (h *Hub) broadcastCurrentTableState(tableID uuid.UUID, table *engine.TableGame) {
+	state := table.GetPublicState()
+	h.BroadcastTableState(tableID, state)
+
+	// Envia cartas privadas para cada jogador individualmente
+	for _, p := range state.Players {
+		if p.UserID != nil {
+			cards := table.GetPrivateCards(*p.UserID)
+			if cards != nil {
+				h.SendPrivateCardsToUser(tableID, *p.UserID, cards)
 			}
 		}
 	}
@@ -176,15 +260,115 @@ func (c *Client) readPump() {
 			msg.Timestamp = time.Now().Unix()
 			msg.UserID = &c.UserID
 
-			if msg.Type == MsgPing {
+			switch msg.Type {
+			case MsgPing:
 				pongMsg, _ := json.Marshal(WSMessage{
 					Type:      MsgPong,
 					Timestamp: time.Now().Unix(),
 				})
 				c.Send <- pongMsg
+
+			case MsgJoinTable:
+				var joinPayload JoinTablePayload
+				if err := json.Unmarshal(msg.Payload, &joinPayload); err == nil {
+					tid, err := uuid.Parse(joinPayload.TableID)
+					if err == nil {
+						c.handleJoinTable(tid, joinPayload.SeatNumber, joinPayload.BuyIn)
+					}
+				}
+
+			case MsgLeaveTable:
+				c.handleLeaveTable()
+
+			case MsgPlayerAct:
+				var actPayload PlayerActionPayload
+				if err := json.Unmarshal(msg.Payload, &actPayload); err == nil {
+					c.handlePlayerAction(actPayload.Action, actPayload.Amount)
+				}
 			}
 		}
 	}
+}
+
+func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64) {
+	c.Hub.mu.Lock()
+	// Se já estava em outra mesa, remove dela
+	if c.TableID != nil && *c.TableID != tableID {
+		oldTid := *c.TableID
+		if tbl, exists := c.Hub.tables[oldTid]; exists {
+			delete(tbl, c)
+			if len(tbl) == 0 {
+				delete(c.Hub.tables, oldTid)
+			}
+		}
+	}
+
+	c.TableID = &tableID
+	if _, exists := c.Hub.tables[tableID]; !exists {
+		c.Hub.tables[tableID] = make(map[*Client]bool)
+	}
+	c.Hub.tables[tableID][c] = true
+	c.Hub.mu.Unlock()
+
+	log.Printf("Jogador %s (%s) juntou-se à mesa %s no assento %d", c.Nome, c.UserID, tableID, seatNumber)
+
+	if c.Hub.gameService != nil {
+		table := c.Hub.gameService.GetOrCreateTable(tableID, 25, 50)
+		if seatNumber > 0 {
+			if buyIn <= 0 {
+				buyIn = 2500
+			}
+			_ = table.JoinPlayer(c.UserID, c.Nome, seatNumber, buyIn)
+		}
+		c.Hub.broadcastCurrentTableState(tableID, table)
+	}
+}
+
+func (c *Client) handleLeaveTable() {
+	if c.TableID == nil {
+		return
+	}
+	tableID := *c.TableID
+
+	c.Hub.mu.Lock()
+	if tbl, exists := c.Hub.tables[tableID]; exists {
+		delete(tbl, c)
+		if len(tbl) == 0 {
+			delete(c.Hub.tables, tableID)
+		}
+	}
+	c.TableID = nil
+	c.Hub.mu.Unlock()
+
+	log.Printf("Jogador %s (%s) saiu da mesa %s", c.Nome, c.UserID, tableID)
+
+	if c.Hub.gameService != nil {
+		if table, ok := c.Hub.gameService.GetTable(tableID); ok {
+			table.LeavePlayer(c.UserID)
+			c.Hub.broadcastCurrentTableState(tableID, table)
+		}
+	}
+}
+
+func (c *Client) handlePlayerAction(action string, amount int64) {
+	if c.TableID == nil || c.Hub.gameService == nil {
+		return
+	}
+	tableID := *c.TableID
+
+	table, ok := c.Hub.gameService.GetTable(tableID)
+	if !ok {
+		return
+	}
+
+	actType := engine.ActionType(action)
+	err := table.ProcessAction(c.UserID, actType, amount)
+	if err != nil {
+		log.Printf("Ação inválida do jogador %s: %v", c.Nome, err)
+		return
+	}
+
+	c.Hub.broadcastCurrentTableState(tableID, table)
 }
 
 func (c *Client) writePump() {
