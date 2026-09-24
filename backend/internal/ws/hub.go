@@ -141,8 +141,8 @@ func (h *Hub) BroadcastAll(message []byte) {
 }
 
 func (h *Hub) BroadcastToTable(tableID uuid.UUID, message []byte) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	if clients, ok := h.tables[tableID]; ok {
 		for client := range clients {
@@ -392,12 +392,6 @@ func (c *Client) writePump() {
 				return
 			}
 			w.Write(message)
-
-			n := len(c.Send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.Send)
-			}
 
 			if err := w.Close(); err != nil {
 				return

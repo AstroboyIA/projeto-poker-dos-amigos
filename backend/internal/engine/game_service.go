@@ -275,9 +275,19 @@ func (tg *TableGame) LeavePlayer(userID uuid.UUID) bool {
 		tg.Pot = 0
 		tg.CurrentBet = 0
 	} else if tg.Stage != StageWaiting && tg.Stage != StageShowdown && tg.Stage != StageHandOver {
+		// A remoção desloca os índices dos jogadores que estavam depois dele.
+		if idx < tg.CurrentTurnIdx {
+			tg.CurrentTurnIdx--
+		}
+		if idx < tg.DealerIdx {
+			tg.DealerIdx--
+		}
 		// Se era a vez dele, avança turno
 		if tg.CurrentTurnIdx >= len(tg.Players) {
 			tg.CurrentTurnIdx = 0
+		}
+		if tg.DealerIdx >= len(tg.Players) {
+			tg.DealerIdx = 0
 		}
 		tg.checkRoundOrSurvivorLocked()
 	}
