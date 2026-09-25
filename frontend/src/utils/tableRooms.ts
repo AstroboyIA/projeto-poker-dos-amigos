@@ -109,11 +109,7 @@ export const countAvailableSeats = (table: TableRoom) => {
 
 export const occupyTableSeatRemote = async (token: string | null, tableId: string, seatNumber: number) => {
   if (token) {
-    try {
-      await api.occupySeat(token, tableId, seatNumber);
-    } catch (e) {
-      console.warn('Erro ao ocupar assento remoto:', e);
-    }
+    await api.occupySeat(token, tableId, seatNumber);
   }
   const tables = getCachedTableRooms();
   const updated = tables.map((table) => {
@@ -134,12 +130,12 @@ export const leaveTableSeatRemote = async (token: string | null, tableId: string
       console.warn('Erro ao desocupar assento remoto:', e);
     }
   }
-  const updated = getCachedTableRooms().map((table) => {
-    if (table.id !== tableId) return table;
-    return {
-      ...table,
-      occupiedSeats: table.occupiedSeats.filter((seat) => seat !== seatNumber),
-    };
+  const updated = getCachedTableRooms().flatMap((table) => {
+    if (table.id !== tableId) return [table];
+
+    const occupiedSeats = table.occupiedSeats.filter((seat) => seat !== seatNumber);
+    const isBuiltInTable = table.createdBy === 'Clube' || table.createdBy === 'Diretoria';
+    return occupiedSeats.length === 0 && !isBuiltInTable ? [] : [{ ...table, occupiedSeats }];
   });
   saveCachedTableRooms(updated);
 };

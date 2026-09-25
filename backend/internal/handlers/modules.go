@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -249,18 +250,28 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 
 	for i, t := range h.tables {
 		if t.ID.String() == req.TableID {
-			already := false
-			for _, s := range t.OccupiedSeats {
+			if req.SeatNumber < 1 || req.SeatNumber > t.MaxSeats {
+				response.Error(w, http.StatusBadRequest, fmt.Sprintf("Assento deve estar entre 1 e %d", t.MaxSeats))
+				return
+			}
+
+			for _, s := range t.BotSeats {
 				if s == req.SeatNumber {
-					already = true
-					break
+					response.Error(w, http.StatusConflict, "Assento reservado para bot")
+					return
 				}
 			}
-			if !already {
-				h.tables[i].OccupiedSeats = append(h.tables[i].OccupiedSeats, req.SeatNumber)
-				h.tables[i].UpdatedAt = time.Now()
-				go h.broadcastTablesUpdate()
+
+			for _, s := range t.OccupiedSeats {
+				if s == req.SeatNumber {
+					response.Error(w, http.StatusConflict, "Assento já está ocupado")
+					return
+				}
 			}
+
+			h.tables[i].OccupiedSeats = append(h.tables[i].OccupiedSeats, req.SeatNumber)
+			h.tables[i].UpdatedAt = time.Now()
+			go h.broadcastTablesUpdate()
 			response.JSON(w, http.StatusOK, h.tables[i])
 			return
 		}
