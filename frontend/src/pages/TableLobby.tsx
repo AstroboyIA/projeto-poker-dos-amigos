@@ -305,7 +305,7 @@ const CreateTableModal: React.FC<{
         buyInMax,
         maxSeats: 9,
         botSeats,
-        occupiedSeats: [1],
+        occupiedSeats: [],
         password: password.trim() || undefined,
         createdBy,
       });
@@ -354,7 +354,7 @@ const CreateTableModal: React.FC<{
                   {seat === 1 && <CheckCircle2 size={14} className="text-emerald-300" />}
                 </div>
                 {seat === 1 ? (
-                  <p className="text-[10px] text-emerald-300 font-bold uppercase">Criador</p>
+                  <p className="text-[10px] text-emerald-300 font-bold uppercase">Disponível</p>
                 ) : (
                   <div className="grid grid-cols-2 rounded-lg border border-zinc-700 overflow-hidden text-[10px] font-extrabold uppercase">
                     <button

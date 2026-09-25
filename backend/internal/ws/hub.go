@@ -58,12 +58,13 @@ type PrivateCardsPayload struct {
 }
 
 type Client struct {
-	Hub     *Hub
-	Conn    *websocket.Conn
-	Send    chan []byte
-	UserID  uuid.UUID
-	Nome    string
-	TableID *uuid.UUID
+	Hub        *Hub
+	Conn       *websocket.Conn
+	Send       chan []byte
+	UserID     uuid.UUID
+	Nome       string
+	TableID    *uuid.UUID
+	SeatNumber int
 }
 
 type Hub struct {
@@ -73,6 +74,7 @@ type Hub struct {
 	register    chan *Client
 	unregister  chan *Client
 	gameService *engine.GameService
+	releaseSeat func(uuid.UUID, int)
 	mu          sync.RWMutex
 }
 
@@ -85,6 +87,11 @@ func NewHub(gameService *engine.GameService) *Hub {
 		unregister:  make(chan *Client),
 		gameService: gameService,
 	}
+}
+
+// SetReleaseSeatHandler links the websocket lifecycle to the lobby occupancy.
+func (h *Hub) SetReleaseSeatHandler(handler func(uuid.UUID, int)) {
+	h.releaseSeat = handler
 }
 
 func (h *Hub) Run() {
@@ -101,6 +108,7 @@ func (h *Hub) Run() {
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.Send)
+				tableID := client.TableID
 				if client.TableID != nil {
 					tid := *client.TableID
 					if tbl, exists := h.tables[tid]; exists {
@@ -116,6 +124,9 @@ func (h *Hub) Run() {
 							go h.broadcastCurrentTableState(tid, table)
 						}
 					}
+				}
+				if tableID != nil && client.SeatNumber > 0 && h.releaseSeat != nil {
+					h.releaseSeat(*tableID, client.SeatNumber)
 				}
 			}
 			h.mu.Unlock()
@@ -304,6 +315,7 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64)
 	}
 
 	c.TableID = &tableID
+	c.SeatNumber = seatNumber
 	if _, exists := c.Hub.tables[tableID]; !exists {
 		c.Hub.tables[tableID] = make(map[*Client]bool)
 	}
@@ -338,6 +350,8 @@ func (c *Client) handleLeaveTable() {
 		}
 	}
 	c.TableID = nil
+	seatNumber := c.SeatNumber
+	c.SeatNumber = 0
 	c.Hub.mu.Unlock()
 
 	log.Printf("Jogador %s (%s) saiu da mesa %s", c.Nome, c.UserID, tableID)
@@ -347,6 +361,9 @@ func (c *Client) handleLeaveTable() {
 			table.LeavePlayer(c.UserID)
 			c.Hub.broadcastCurrentTableState(tableID, table)
 		}
+	}
+	if seatNumber > 0 && c.Hub.releaseSeat != nil {
+		c.Hub.releaseSeat(tableID, seatNumber)
 	}
 }
 

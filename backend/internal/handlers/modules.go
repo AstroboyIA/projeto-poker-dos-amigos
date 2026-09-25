@@ -201,7 +201,7 @@ func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		req.BotSeats = []int{}
 	}
 	if req.OccupiedSeats == nil {
-		req.OccupiedSeats = []int{1}
+		req.OccupiedSeats = []int{}
 	}
 
 	newTable := models.PokerTable{
@@ -276,32 +276,55 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.releaseSeat(req.TableID, req.SeatNumber) {
+		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ReleaseSeat is also used by the websocket hub when a client disconnects.
+// It is intentionally idempotent so an explicit leave followed by disconnect
+// cannot leave stale occupancy or fail the cleanup.
+func (h *ModulesHandler) ReleaseSeat(tableID uuid.UUID, seatNumber int) {
+	h.releaseSeat(tableID.String(), seatNumber)
+}
+
+func (h *ModulesHandler) releaseSeat(tableID string, seatNumber int) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	for i, t := range h.tables {
-		if t.ID.String() == req.TableID {
-			newOccupied := []int{}
-			for _, s := range t.OccupiedSeats {
-				if s != req.SeatNumber {
-					newOccupied = append(newOccupied, s)
-				}
+		if t.ID.String() != tableID {
+			continue
+		}
+
+		newOccupied := make([]int, 0, len(t.OccupiedSeats))
+		for _, s := range t.OccupiedSeats {
+			if s != seatNumber {
+				newOccupied = append(newOccupied, s)
 			}
+		}
+
+		changed := len(newOccupied) != len(t.OccupiedSeats)
+		if changed {
 			h.tables[i].OccupiedSeats = newOccupied
 			h.tables[i].UpdatedAt = time.Now()
-
-			// Se a mesa foi criada por usuário e esvaziou totalmente, removemos
-			if len(newOccupied) == 0 && t.CreatedBy != "Clube" && t.CreatedBy != "Diretoria" {
-				h.tables = append(h.tables[:i], h.tables[i+1:]...)
-			}
-
-			go h.broadcastTablesUpdate()
-			response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
-			return
 		}
+
+		if len(newOccupied) == 0 && t.CreatedBy != "Clube" && t.CreatedBy != "Diretoria" {
+			h.tables = append(h.tables[:i], h.tables[i+1:]...)
+			changed = true
+		}
+
+		if changed {
+			go h.broadcastTablesUpdate()
+		}
+		return true
 	}
 
-	response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+	return false
 }
 
 type ChipTransactionRequest struct {

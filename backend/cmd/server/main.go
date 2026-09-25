@@ -26,6 +26,7 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(tokenManager)
 	modulesHandler := handlers.NewModulesHandler(hub, authHandler)
+	hub.SetReleaseSeatHandler(modulesHandler.ReleaseSeat)
 
 	r := chi.NewRouter()
 
