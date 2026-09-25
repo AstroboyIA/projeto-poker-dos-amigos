@@ -51,6 +51,45 @@ interface ActionLog {
   timestamp: string;
 }
 
+const normalizeTableState = (payload: unknown): ServerTableState | null => {
+  if (!payload || typeof payload !== 'object') return null;
+  const state = payload as Partial<ServerTableState>;
+  if (!Array.isArray(state.players)) return null;
+
+  const players = state.players.filter(
+    (player): player is ServerTableState['players'][number] =>
+      Boolean(player) &&
+      typeof player === 'object' &&
+      Number.isInteger(player.seat_number) &&
+      player.seat_number >= 1 &&
+      typeof player.name === 'string'
+  );
+  if (players.length === 0) return null;
+
+  const currentTurnIdx =
+    typeof state.current_turn_idx === 'number' && Number.isInteger(state.current_turn_idx)
+      ? state.current_turn_idx
+      : 0;
+  const handNumber = typeof state.hand_number === 'number' && Number.isFinite(state.hand_number) ? state.hand_number : 1;
+  const pot = typeof state.pot === 'number' && Number.isFinite(state.pot) ? state.pot : 0;
+  const currentRoundBet =
+    typeof state.current_round_bet === 'number' && Number.isFinite(state.current_round_bet)
+      ? state.current_round_bet
+      : 0;
+  const dealerIdx = typeof state.dealer_idx === 'number' && Number.isInteger(state.dealer_idx) ? state.dealer_idx : 0;
+  return {
+    ...(state as ServerTableState),
+    stage: state.stage || 'WAITING',
+    hand_number: handNumber,
+    pot,
+    current_round_bet: currentRoundBet,
+    current_turn_idx: Math.max(0, Math.min(currentTurnIdx, players.length - 1)),
+    dealer_idx: dealerIdx,
+    community_cards: Array.isArray(state.community_cards) ? state.community_cards : [],
+    players,
+  };
+};
+
 export const PokerTablePage: React.FC = () => {
   const { user, token, updateUser } = useAuth();
   const navigate = useNavigate();
@@ -319,8 +358,8 @@ export const PokerTablePage: React.FC = () => {
           const msg = JSON.parse(event.data);
 
           if (msg.type === 'TABLE_STATE' && msg.payload) {
-            const serverState: ServerTableState = msg.payload;
-            if (Array.isArray(serverState.players)) {
+            const serverState = normalizeTableState(msg.payload);
+            if (serverState) {
               handleTableStateUpdate(serverState);
             }
           } else if (msg.type === 'ERROR' && msg.payload) {
@@ -391,9 +430,9 @@ export const PokerTablePage: React.FC = () => {
         name: isCurrentUser ? `${user?.nome_completo || 'Você'} (VIP)` : sp.name,
         isUser: isCurrentUser,
         isBot: sp.is_bot,
-        stack: sp.stack,
-        currentBet: sp.current_bet,
-        cards: sp.cards || [],
+        stack: Number.isFinite(sp.stack) ? sp.stack : 0,
+        currentBet: Number.isFinite(sp.current_bet) ? sp.current_bet : 0,
+        cards: Array.isArray(sp.cards) ? sp.cards : [],
         hasFolded: sp.has_folded,
         isAllIn: sp.is_all_in,
         hasActed: sp.has_acted,
@@ -411,6 +450,11 @@ export const PokerTablePage: React.FC = () => {
     });
 
     setPlayers(mappedPlayers);
+    if (mappedPlayers.length === 0) {
+      setCurrentTurnIdx(0);
+    } else if (serverState.current_turn_idx >= mappedPlayers.length) {
+      setCurrentTurnIdx(0);
+    }
     setActionTimer(MAX_ACTION_TIME);
   };
 
@@ -935,7 +979,7 @@ export const PokerTablePage: React.FC = () => {
                 DESEJA SAIR DA MESA?
               </h3>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Seu saldo de <span className="text-[#f5d77f] font-bold font-mono">${userPlayer?.stack.toLocaleString('pt-BR')}</span> fichas será preservado e você retornará ao painel principal.
+                Seu saldo de <span className="text-[#f5d77f] font-bold font-mono">${userPlayer?.stack?.toLocaleString('pt-BR') || 0}</span> fichas será preservado e você retornará ao painel principal.
               </p>
             </div>
 
