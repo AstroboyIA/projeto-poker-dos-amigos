@@ -26,11 +26,14 @@ export const TableLobbyPage: React.FC = () => {
   const [lockedTable, setLockedTable] = useState<TableRoom | null>(null);
   const [passwordAttempt, setPasswordAttempt] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const tablesRequestVersion = React.useRef(0);
 
   const loadTables = useCallback(async () => {
+    const requestVersion = ++tablesRequestVersion.current;
     setLoadingTables(true);
     try {
       const remote = await fetchRemoteTables(token);
+      if (requestVersion !== tablesRequestVersion.current) return;
       setTables(remote);
     } finally {
       setLoadingTables(false);
@@ -50,6 +53,9 @@ export const TableLobbyPage: React.FC = () => {
     let socket: WebSocket | null = null;
     try {
       socket = new WebSocket(wsUrl);
+      socket.onopen = () => {
+        void loadTables();
+      };
       socket.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -58,6 +64,7 @@ export const TableLobbyPage: React.FC = () => {
               typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload)
             );
             const rooms = rawTables.map(pokerTableToRoom);
+            tablesRequestVersion.current++;
             saveCachedTableRooms(rooms);
             setTables(rooms);
           }
@@ -72,7 +79,7 @@ export const TableLobbyPage: React.FC = () => {
     return () => {
       if (socket) socket.close();
     };
-  }, [token]);
+  }, [loadTables, token]);
 
   const visibleTables = useMemo(
     () => tables.filter((table) => countAvailableSeats(table) > 0),

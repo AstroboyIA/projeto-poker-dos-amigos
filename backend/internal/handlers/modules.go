@@ -228,7 +228,7 @@ func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 	h.tables = append([]models.PokerTable{newTable}, h.tables...)
 	h.mu.Unlock()
 
-	go h.broadcastTablesUpdate()
+	h.broadcastTablesUpdate()
 
 	response.JSON(w, http.StatusCreated, newTable)
 }
@@ -246,17 +246,18 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	for i, t := range h.tables {
 		if t.ID.String() == req.TableID {
 			if req.SeatNumber < 1 || req.SeatNumber > t.MaxSeats {
+				h.mu.Unlock()
 				response.Error(w, http.StatusBadRequest, fmt.Sprintf("Assento deve estar entre 1 e %d", t.MaxSeats))
 				return
 			}
 
 			for _, s := range t.BotSeats {
 				if s == req.SeatNumber {
+					h.mu.Unlock()
 					response.Error(w, http.StatusConflict, "Assento reservado para bot")
 					return
 				}
@@ -264,6 +265,7 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 
 			for _, s := range t.OccupiedSeats {
 				if s == req.SeatNumber {
+					h.mu.Unlock()
 					response.Error(w, http.StatusConflict, "Assento já está ocupado")
 					return
 				}
@@ -271,12 +273,15 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 
 			h.tables[i].OccupiedSeats = append(h.tables[i].OccupiedSeats, req.SeatNumber)
 			h.tables[i].UpdatedAt = time.Now()
-			go h.broadcastTablesUpdate()
-			response.JSON(w, http.StatusOK, h.tables[i])
+			updatedTable := h.tables[i]
+			h.mu.Unlock()
+			h.broadcastTablesUpdate()
+			response.JSON(w, http.StatusOK, updatedTable)
 			return
 		}
 	}
 
+	h.mu.Unlock()
 	response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 }
 
@@ -304,7 +309,6 @@ func (h *ModulesHandler) ReleaseSeat(tableID uuid.UUID, seatNumber int) {
 
 func (h *ModulesHandler) releaseSeat(tableID string, seatNumber int) bool {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	for i, t := range h.tables {
 		if t.ID.String() != tableID {
@@ -329,12 +333,14 @@ func (h *ModulesHandler) releaseSeat(tableID string, seatNumber int) bool {
 			changed = true
 		}
 
+		h.mu.Unlock()
 		if changed {
-			go h.broadcastTablesUpdate()
+			h.broadcastTablesUpdate()
 		}
 		return true
 	}
 
+	h.mu.Unlock()
 	return false
 }
 
