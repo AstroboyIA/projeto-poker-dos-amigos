@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	MsgLeaveTable   MessageType = "LEAVE_TABLE"
 	MsgPlayerAct    MessageType = "PLAYER_ACTION"
 	MsgTableState   MessageType = "TABLE_STATE"
+	MsgError        MessageType = "ERROR"
 	MsgPrivateCards MessageType = "PRIVATE_CARDS"
 	MsgChatMessage  MessageType = "CHAT_MESSAGE"
 	MsgPing         MessageType = "PING"
@@ -302,6 +304,25 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64) {
+	if c.Hub.gameService == nil {
+		c.sendError("Serviço da mesa indisponível")
+		return
+	}
+
+	if seatNumber < 1 {
+		c.sendError("Assento inválido")
+		return
+	}
+
+	table := c.Hub.gameService.GetOrCreateTable(tableID, 25, 50)
+	if buyIn <= 0 {
+		buyIn = 2500
+	}
+	if err := table.JoinPlayer(c.UserID, c.Nome, seatNumber, buyIn); err != nil {
+		c.sendError(err.Error())
+		return
+	}
+
 	c.Hub.mu.Lock()
 	// Se já estava em outra mesa, remove dela
 	if c.TableID != nil && *c.TableID != tableID {
@@ -324,15 +345,22 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64)
 
 	log.Printf("Jogador %s (%s) juntou-se à mesa %s no assento %d", c.Nome, c.UserID, tableID, seatNumber)
 
-	if c.Hub.gameService != nil {
-		table := c.Hub.gameService.GetOrCreateTable(tableID, 25, 50)
-		if seatNumber > 0 {
-			if buyIn <= 0 {
-				buyIn = 2500
-			}
-			_ = table.JoinPlayer(c.UserID, c.Nome, seatNumber, buyIn)
-		}
-		c.Hub.broadcastCurrentTableState(tableID, table)
+	c.Hub.broadcastCurrentTableState(tableID, table)
+}
+
+func (c *Client) sendError(message string) {
+	msg, err := json.Marshal(WSMessage{
+		Type:      MsgError,
+		Payload:   json.RawMessage(`{"message":` + strconv.Quote(message) + `}`),
+		Timestamp: time.Now().Unix(),
+	})
+	if err != nil {
+		return
+	}
+	select {
+	case c.Send <- msg:
+	default:
+		log.Printf("Não foi possível enviar erro WebSocket para %s: %s", c.Nome, message)
 	}
 }
 
@@ -386,6 +414,25 @@ func (c *Client) handlePlayerAction(action string, amount int64) {
 	}
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
+	if table.GetPublicState().Stage == engine.StageShowdown {
+		c.Hub.scheduleNextHand(tableID, table)
+	}
+}
+
+func (h *Hub) scheduleNextHand(tableID uuid.UUID, table *engine.TableGame) {
+	go func() {
+		time.Sleep(5 * time.Second)
+
+		h.mu.RLock()
+		_, tableConnected := h.tables[tableID]
+		h.mu.RUnlock()
+		if !tableConnected {
+			return
+		}
+
+		table.StartNewHand()
+		h.broadcastCurrentTableState(tableID, table)
+	}()
 }
 
 func (c *Client) writePump() {

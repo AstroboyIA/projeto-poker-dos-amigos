@@ -320,7 +320,13 @@ export const PokerTablePage: React.FC = () => {
 
           if (msg.type === 'TABLE_STATE' && msg.payload) {
             const serverState: ServerTableState = msg.payload;
-            handleTableStateUpdate(serverState);
+            if (Array.isArray(serverState.players)) {
+              handleTableStateUpdate(serverState);
+            }
+          } else if (msg.type === 'ERROR' && msg.payload) {
+            const errorPayload = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;
+            addLog(`Erro na mesa: ${errorPayload.message || 'Não foi possível entrar na mesa.'}`);
+            setIsWaitingForAction(false);
           } else if (msg.type === 'PRIVATE_CARDS' && msg.payload) {
             const privatePayload: PrivateCardsPayload = msg.payload;
             if (privatePayload.cards && privatePayload.cards.length > 0) {
@@ -358,6 +364,8 @@ export const PokerTablePage: React.FC = () => {
   }, [tableId, chosenSeat, initialBuyIn, token]);
 
   const handleTableStateUpdate = (serverState: ServerTableState) => {
+    if (!Array.isArray(serverState.players)) return;
+
     setIsWaitingForAction(false);
     setStage(serverState.stage);
     setHandNumber(serverState.hand_number);

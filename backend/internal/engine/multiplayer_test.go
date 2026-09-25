@@ -95,3 +95,20 @@ func TestGameServiceTwoPlayersSync(t *testing.T) {
 	state3 := table.GetPublicState()
 	t.Logf("Estado após Call: Pote = %d, Turno = %d", state3.Pot, state3.CurrentTurnIdx)
 }
+
+func TestJoinPlayerRejectsOccupiedSeatWithoutChangingTable(t *testing.T) {
+	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
+	firstUser := uuid.New()
+	secondUser := uuid.New()
+
+	if err := table.JoinPlayer(firstUser, "Primeiro", 1, 2000); err != nil {
+		t.Fatalf("primeiro jogador não entrou: %v", err)
+	}
+	if err := table.JoinPlayer(secondUser, "Segundo", 1, 2000); err == nil {
+		t.Fatal("esperava erro ao tentar ocupar assento já utilizado")
+	}
+
+	if state := table.GetPublicState(); len(state.Players) != 1 {
+		t.Fatalf("a mesa foi alterada após entrada inválida: %d jogadores", len(state.Players))
+	}
+}

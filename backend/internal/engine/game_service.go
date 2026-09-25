@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
@@ -307,6 +306,9 @@ func (tg *TableGame) startNewHandLocked() {
 		return
 	}
 
+	if tg.Stage == StageShowdown || tg.Stage == StageHandOver {
+		tg.HandNumber++
+	}
 	tg.WinnerMessage = ""
 	tg.CommunityCards = nil
 	tg.Pot = 0
@@ -593,11 +595,6 @@ func (tg *TableGame) handleSingleSurvivorLocked(winner *PlayerState) {
 	tg.Stage = StageShowdown
 	winner.Stack += tg.Pot
 	tg.WinnerMessage = fmt.Sprintf("🏆 %s venceu o pote de $%d (Todos deram Fold)!", winner.Name, tg.Pot)
-
-	go func() {
-		time.Sleep(5 * time.Second)
-		tg.StartNewHand()
-	}()
 }
 
 func (tg *TableGame) executeShowdownLocked() {
@@ -636,10 +633,6 @@ func (tg *TableGame) executeShowdownLocked() {
 		tg.WinnerMessage = fmt.Sprintf("🎉 %s venceu o pote de $%d com %s!", winnerNames, tg.Pot, handDesc)
 	}
 
-	go func() {
-		time.Sleep(5 * time.Second)
-		tg.StartNewHand()
-	}()
 }
 
 // Retorna estado público seguro (sem revelar cartas fechadas de outros)
