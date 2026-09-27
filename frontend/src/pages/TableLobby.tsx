@@ -122,7 +122,7 @@ export const TableLobbyPage: React.FC = () => {
 
   const handleCreated = (table: TableRoom) => {
     setShowCreate(false);
-    navigate(`/table/select-seat?tableId=${table.id}`);
+    navigate(`/table/select-seat?tableId=${table.id}&autoJoin=1`);
   };
 
   return (

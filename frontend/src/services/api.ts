@@ -122,6 +122,8 @@ export const api = {
   },
 
   async buyIn(token: string, amount: number, tableId?: string, seatNumber?: number): Promise<User> {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
     const res = await fetch(`${API_BASE}/chips/buy-in`, {
       method: 'POST',
       headers: {
@@ -129,7 +131,9 @@ export const api = {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ amount, table_id: tableId, seat_number: seatNumber }),
+      signal: controller.signal,
     });
+    window.clearTimeout(timeout);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Saldo insuficiente ou falha no buy-in');
     return data.data;

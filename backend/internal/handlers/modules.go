@@ -469,7 +469,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		for i, table := range h.tables {
 			if table.ID.String() == req.TableID {
 				tableIndex = i
-				if req.SeatNumber < 1 || req.SeatNumber > table.MaxSeats || req.Amount < table.BuyInMin || req.Amount > table.BuyInMax {
+				if req.SeatNumber < 1 || req.SeatNumber > table.MaxSeats || req.Amount <= 0 || req.Amount < table.BuyInMin || req.Amount > table.BuyInMax {
 					h.mu.Unlock()
 					response.Error(w, http.StatusBadRequest, "Buy-in ou assento inválido para esta mesa")
 					return

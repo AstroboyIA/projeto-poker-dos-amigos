@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users, Bot } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
@@ -22,6 +22,7 @@ export const SeatSelectionPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tableId = searchParams.get('tableId') || 'mesa-vip-01';
+  const autoJoin = searchParams.get('autoJoin') === '1';
   const room = getTableRoomById(tableId);
   const isCreator = Boolean(user?.id && room?.creatorUserId && user.id === room.creatorUserId);
 
@@ -32,7 +33,7 @@ export const SeatSelectionPage: React.FC = () => {
   const buyInMax = room?.buyInMax || 5000;
   const defaultBuyIn = Math.min(Math.max(2500, buyInMin), buyInMax);
 
-  const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
+  const [selectedSeat, setSelectedSeat] = useState<number | null>(autoJoin ? 1 : null);
   const [buyInAmount, setBuyInAmount] = useState<number>(defaultBuyIn);
   const [autoPostBlinds, setAutoPostBlinds] = useState<boolean>(true);
   const [autoRebuy, setAutoRebuy] = useState<boolean>(false);
@@ -127,6 +128,12 @@ export const SeatSelectionPage: React.FC = () => {
       setEntering(false);
     }
   };
+
+  useEffect(() => {
+    if (autoJoin && selectedSeat === 1 && !entering) {
+      void handleConfirmAndEnter();
+    }
+  }, [autoJoin, selectedSeat]);
 
   const openSeatsCount = seats.filter((s) => !s.isOccupied && seatModes[s.seatNumber] !== 'bot').length;
   const configuredBotCount = seats.filter((s) => !s.isOccupied && seatModes[s.seatNumber] === 'bot').length;
