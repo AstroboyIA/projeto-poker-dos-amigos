@@ -124,7 +124,8 @@ export const api = {
   async buyIn(token: string, amount: number, tableId?: string, seatNumber?: number): Promise<User> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15000);
-    const res = await fetch(`${API_BASE}/chips/buy-in`, {
+    try {
+      const res = await fetch(`${API_BASE}/chips/buy-in`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -132,11 +133,18 @@ export const api = {
       },
       body: JSON.stringify({ amount, table_id: tableId, seat_number: seatNumber }),
       signal: controller.signal,
-    });
-    window.clearTimeout(timeout);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Saldo insuficiente ou falha no buy-in');
-    return data.data;
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Saldo insuficiente ou falha no buy-in');
+      return data.data;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('O buy-in demorou mais de 15 segundos. Verifique se o servidor está disponível.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   },
 
   async getWallet(token: string): Promise<{ wallet: { balance_cents: number; available_cents: number; reserved_cents: number }; ledger: Array<{ type: string; amount_cents: number; created_at: string }> }> {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users, Bot } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
@@ -38,6 +38,7 @@ export const SeatSelectionPage: React.FC = () => {
   const [autoPostBlinds, setAutoPostBlinds] = useState<boolean>(true);
   const [autoRebuy, setAutoRebuy] = useState<boolean>(false);
   const [entering, setEntering] = useState(false);
+  const autoJoinStarted = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [seatModes, setSeatModes] = useState<Record<number, SeatMode>>({
     1: room?.botSeats.includes(1) ? 'bot' : 'open',
@@ -130,7 +131,8 @@ export const SeatSelectionPage: React.FC = () => {
   };
 
   useEffect(() => {
-    if (autoJoin && selectedSeat === 1 && !entering) {
+    if (autoJoin && selectedSeat === 1 && !entering && !autoJoinStarted.current) {
+      autoJoinStarted.current = true;
       void handleConfirmAndEnter();
     }
   }, [autoJoin, selectedSeat]);
