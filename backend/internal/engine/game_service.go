@@ -247,6 +247,11 @@ func (tg *TableGame) AddBot(seatNumber int, name string, stack int64) error {
 
 // Remove jogador da mesa
 func (tg *TableGame) LeavePlayer(userID uuid.UUID) bool {
+	_, removed := tg.LeavePlayerWithStack(userID)
+	return removed
+}
+
+func (tg *TableGame) LeavePlayerWithStack(userID uuid.UUID) (int64, bool) {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
 
@@ -259,7 +264,7 @@ func (tg *TableGame) LeavePlayer(userID uuid.UUID) bool {
 	}
 
 	if idx == -1 {
-		return false
+		return 0, false
 	}
 
 	// Se estava na mão ativa, dá fold
@@ -291,7 +296,7 @@ func (tg *TableGame) LeavePlayer(userID uuid.UUID) bool {
 		tg.checkRoundOrSurvivorLocked()
 	}
 
-	return true
+	return player.Stack, true
 }
 
 func (tg *TableGame) StartNewHand() {

@@ -63,6 +63,7 @@ export const api = {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao buscar mesas');
     return data.data || [];
   },
 
@@ -120,31 +121,35 @@ export const api = {
     if (!res.ok) throw new Error(data.error || 'Falha ao desocupar assento');
   },
 
-  async buyIn(token: string, amount: number): Promise<User> {
+  async buyIn(token: string, amount: number, tableId?: string, seatNumber?: number): Promise<User> {
     const res = await fetch(`${API_BASE}/chips/buy-in`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ amount }),
+      body: JSON.stringify({ amount, table_id: tableId, seat_number: seatNumber }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Saldo insuficiente ou falha no buy-in');
     return data.data;
   },
 
-  async cashOut(token: string, amount: number): Promise<User> {
-    const res = await fetch(`${API_BASE}/chips/cash-out`, {
+  async getWallet(token: string): Promise<{ wallet: { balance_cents: number; available_cents: number; reserved_cents: number }; ledger: Array<{ type: string; amount_cents: number; created_at: string }> }> {
+    const res = await fetch(`${API_BASE}/wallet`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao buscar carteira');
+    return data.data;
+  },
+
+  async devDeposit(token: string, amountCents: number): Promise<User> {
+    const res = await fetch(`${API_BASE}/dev/wallet/deposit`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ amount }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount_cents: amountCents }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Falha no cash-out');
+    if (!res.ok) throw new Error(data.error || 'Falha no depósito MOCK/DEV');
     return data.data;
   },
 

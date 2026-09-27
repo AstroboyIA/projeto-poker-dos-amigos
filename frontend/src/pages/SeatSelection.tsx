@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users, Bot } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
-import { getTableRoomById, occupyTableSeatRemote } from '../utils/tableRooms';
+import { getTableRoomById } from '../utils/tableRooms';
 import { api } from '../services/api';
 
 interface SeatInfo {
@@ -23,6 +23,7 @@ export const SeatSelectionPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const tableId = searchParams.get('tableId') || 'mesa-vip-01';
   const room = getTableRoomById(tableId);
+  const isCreator = Boolean(user?.id && room?.creatorUserId && user.id === room.creatorUserId);
 
   // Configurações da Mesa
   const tableName = `${room?.name || "Mesa VIP Ouro #01 (Texas Hold'em)"} (9-Max)`;
@@ -110,16 +111,10 @@ export const SeatSelectionPage: React.FC = () => {
     setEntering(true);
     try {
       if (token) {
-        const updatedUser = await api.buyIn(token, buyInAmount);
+        const updatedUser = await api.buyIn(token, buyInAmount, tableId, selectedSeat);
         updateUser(updatedUser);
       } else if (user) {
-        updateUser({
-          ...user,
-          saldo_fichas: Math.max(0, user.saldo_fichas - buyInAmount),
-        });
       }
-
-      await occupyTableSeatRemote(token, tableId, selectedSeat);
 
       const botSeats = seats
         .filter((seat) => !seat.isOccupied && seat.seatNumber !== selectedSeat && seatModes[seat.seatNumber] === 'bot')
@@ -290,12 +285,14 @@ export const SeatSelectionPage: React.FC = () => {
             </div>
 
             <div className="space-y-2 pt-2">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#d4af37]">
-                <Bot size={15} />
-                <span>Configurar assentos da sala</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {seats.filter((seat) => !seat.isOccupied).map((seat) => (
+              {isCreator ? (
+                <>
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#d4af37]">
+                    <Bot size={15} />
+                    <span>Configurar assentos da sala</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {seats.filter((seat) => !seat.isOccupied).map((seat) => (
                   <div
                     key={seat.seatNumber}
                     className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-[#0b0e14] p-2"
@@ -326,8 +323,12 @@ export const SeatSelectionPage: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-zinc-400">A configuração de bots é exclusiva do criador da mesa.</p>
+              )}
             </div>
           </div>
 

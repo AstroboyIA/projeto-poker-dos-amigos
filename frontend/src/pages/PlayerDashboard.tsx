@@ -122,6 +122,7 @@ export const PlayerDashboard: React.FC = () => {
           </h2>
           <span className="text-[#d4af37]">◆</span>
         </div>
+        <button onClick={() => navigate('/wallet')} className="mx-auto block rounded-lg border border-[#d4af37]/50 px-4 py-2 text-xs font-bold text-[#f5d77f]">MINHA CARTEIRA</button>
 
         {/* Modal de Módulo Simulado */}
         {selectedModule && (

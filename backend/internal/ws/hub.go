@@ -91,6 +91,10 @@ func NewHub(gameService *engine.GameService) *Hub {
 	}
 }
 
+func (h *Hub) GameService() *engine.GameService {
+	return h.gameService
+}
+
 // SetReleaseSeatHandler links the websocket lifecycle to the lobby occupancy.
 func (h *Hub) SetReleaseSeatHandler(handler func(uuid.UUID, int)) {
 	h.releaseSeat = handler

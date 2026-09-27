@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/finance"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/ws"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/pkg/response"
@@ -19,6 +20,7 @@ type ModulesHandler struct {
 	authHandler *AuthHandler
 	tables      []models.PokerTable
 	mu          sync.RWMutex
+	wallets     *finance.Service
 }
 
 func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
@@ -81,6 +83,7 @@ func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
 		hub:         hub,
 		authHandler: authHandler,
 		tables:      seedTables,
+		wallets:     finance.NewService(),
 	}
 }
 
@@ -220,6 +223,7 @@ func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		OccupiedSeats: req.OccupiedSeats,
 		Password:      req.Password,
 		CreatedBy:     claims.Nome,
+		CreatorUserID: claims.UserID,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
@@ -239,6 +243,12 @@ type SeatActionRequest struct {
 }
 
 func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
+	if h.authHandler != nil {
+		if _, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims); !ok {
+			response.Error(w, http.StatusUnauthorized, "Não autenticado")
+			return
+		}
+	}
 	var req SeatActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Dados inválidos")
@@ -286,6 +296,13 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if h.authHandler != nil {
+		if !ok {
+			response.Error(w, http.StatusUnauthorized, "Não autenticado")
+			return
+		}
+	}
 	var req SeatActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Dados inválidos")
@@ -296,8 +313,72 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 		return
 	}
-
+	if h.hub != nil {
+		if tableID, err := uuid.Parse(req.TableID); err == nil {
+			if table, exists := h.hub.GameService().GetTable(tableID); exists {
+				if stack, removed := table.LeavePlayerWithStack(claims.UserID); removed {
+					if user, exists := h.authHandler.GetUserByEmail(claims.Email); exists {
+						h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+						wallet, err := h.wallets.ReturnFromTable(user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
+						if err == nil {
+							user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+							user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+						}
+					}
+				}
+			}
+		}
+	}
 	response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *ModulesHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+	wallet := h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	response.JSON(w, http.StatusOK, map[string]interface{}{
+		"wallet": wallet,
+		"ledger": h.wallets.Entries(user.ID),
+	})
+}
+
+// DevDeposit is deliberately named and routed as a development-only mock.
+// It must be replaced by a verified payment webhook before real money is enabled.
+func (h *ModulesHandler) DevDeposit(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	var req struct {
+		AmountCents int64 `json:"amount_cents"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AmountCents <= 0 {
+		response.Error(w, http.StatusBadRequest, "Valor de depósito inválido")
+		return
+	}
+	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	wallet, err := h.wallets.Deposit(user.ID, req.AmountCents, r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+	user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+	response.JSON(w, http.StatusOK, user)
 }
 
 // ReleaseSeat is also used by the websocket hub when a client disconnects.
@@ -344,10 +425,6 @@ func (h *ModulesHandler) releaseSeat(tableID string, seatNumber int) bool {
 	return false
 }
 
-type ChipTransactionRequest struct {
-	Amount int64 `json:"amount"`
-}
-
 func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
 	if !ok {
@@ -355,8 +432,13 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req ChipTransactionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
+	var req struct {
+		Amount      int64  `json:"amount"`
+		AmountCents int64  `json:"amount_cents"`
+		TableID     string `json:"table_id"`
+		SeatNumber  int    `json:"seat_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Valor de buy-in inválido")
 		return
 	}
@@ -367,30 +449,88 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.SaldoFichas < req.Amount {
-		response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
+	amountCents := req.AmountCents
+	if amountCents == 0 {
+		amountCents = finance.ChipsToMoney(req.Amount)
+	}
+	if amountCents <= 0 {
+		response.Error(w, http.StatusBadRequest, "Valor de buy-in inválido")
 		return
 	}
 
-	updatedUser, _ := h.authHandler.UpdateChips(claims.Email, -req.Amount)
-	response.JSON(w, http.StatusOK, updatedUser)
+	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" && req.TableID != "" {
+		key = claims.UserID.String() + ":" + req.TableID + ":" + fmt.Sprint(req.SeatNumber)
+	}
+	if req.TableID != "" {
+		h.mu.Lock()
+		tableIndex := -1
+		for i, table := range h.tables {
+			if table.ID.String() == req.TableID {
+				tableIndex = i
+				if req.SeatNumber < 1 || req.SeatNumber > table.MaxSeats || req.Amount < table.BuyInMin || req.Amount > table.BuyInMax {
+					h.mu.Unlock()
+					response.Error(w, http.StatusBadRequest, "Buy-in ou assento inválido para esta mesa")
+					return
+				}
+				for _, seat := range table.OccupiedSeats {
+					if seat == req.SeatNumber {
+						h.mu.Unlock()
+						response.Error(w, http.StatusConflict, "Assento já está ocupado")
+						return
+					}
+				}
+				for _, seat := range table.BotSeats {
+					if seat == req.SeatNumber {
+						h.mu.Unlock()
+						response.Error(w, http.StatusConflict, "Assento reservado para bot")
+						return
+					}
+				}
+				break
+			}
+		}
+		if tableIndex < 0 {
+			h.mu.Unlock()
+			response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+			return
+		}
+		wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
+		if err != nil {
+			h.mu.Unlock()
+			if err == finance.ErrInsufficientFunds {
+				response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
+				return
+			}
+			response.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.tables[tableIndex].OccupiedSeats = append(h.tables[tableIndex].OccupiedSeats, req.SeatNumber)
+		h.tables[tableIndex].UpdatedAt = time.Now()
+		h.mu.Unlock()
+		h.broadcastTablesUpdate()
+		user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+		user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+		response.JSON(w, http.StatusOK, user)
+		return
+	}
+	wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
+	if err != nil {
+		if err == finance.ErrInsufficientFunds {
+			response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
+			return
+		}
+		response.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+	user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+	response.JSON(w, http.StatusOK, user)
 }
 
 func (h *ModulesHandler) CashOut(w http.ResponseWriter, r *http.Request) {
-	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, "Não autenticado")
-		return
-	}
-
-	var req ChipTransactionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount < 0 {
-		response.Error(w, http.StatusBadRequest, "Valor de cash-out inválido")
-		return
-	}
-
-	updatedUser, _ := h.authHandler.UpdateChips(claims.Email, req.Amount)
-	response.JSON(w, http.StatusOK, updatedUser)
+	response.Error(w, http.StatusGone, "Cash-out é calculado pelo servidor ao sair da mesa")
 }
 
 // Comunicados Oficiais do Clube

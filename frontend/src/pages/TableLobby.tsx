@@ -35,6 +35,8 @@ export const TableLobbyPage: React.FC = () => {
       const remote = await fetchRemoteTables(token);
       if (requestVersion !== tablesRequestVersion.current) return;
       setTables(remote);
+    } catch (error) {
+      console.warn('Falha ao sincronizar mesas com o servidor:', error);
     } finally {
       setLoadingTables(false);
     }
@@ -42,6 +44,13 @@ export const TableLobbyPage: React.FC = () => {
 
   useEffect(() => {
     loadTables();
+  }, [loadTables]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void loadTables();
+    }, 5000);
+    return () => window.clearInterval(interval);
   }, [loadTables]);
 
   // WebSocket para sincronizar criação/alteração de mesas em tempo real

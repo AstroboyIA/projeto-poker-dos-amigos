@@ -72,6 +72,8 @@ func main() {
 		r.Post("/api/tables/leave", modulesHandler.LeaveSeat)
 		r.Post("/api/chips/buy-in", modulesHandler.BuyIn)
 		r.Post("/api/chips/cash-out", modulesHandler.CashOut)
+		r.Get("/api/wallet", modulesHandler.GetWallet)
+		r.Post("/api/dev/wallet/deposit", modulesHandler.DevDeposit)
 		r.Get("/api/announcements", modulesHandler.GetAnnouncements)
 
 		// Módulos Gerenciais (Admin / Gerente)
@@ -84,21 +86,16 @@ func main() {
 	// WebSocket Endpoint
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
-		var userID uuid.UUID
-		userName := "Visitante"
-
-		if tokenStr != "" {
-			if claims, err := tokenManager.ValidateToken(tokenStr); err == nil {
-				userID = claims.UserID
-				userName = claims.Nome
-			}
+		if tokenStr == "" {
+			http.Error(w, "autenticação obrigatória", http.StatusUnauthorized)
+			return
 		}
-
-		if userID == uuid.Nil {
-			userID = uuid.New()
+		claims, err := tokenManager.ValidateToken(tokenStr)
+		if err != nil || claims.UserID == uuid.Nil {
+			http.Error(w, "token inválido", http.StatusUnauthorized)
+			return
 		}
-
-		hub.ServeWS(w, r, userID, userName)
+		hub.ServeWS(w, r, claims.UserID, claims.Nome)
 	})
 
 	serverAddr := fmt.Sprintf(":%s", cfg.Port)

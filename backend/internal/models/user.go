@@ -17,31 +17,38 @@ const (
 type UserStatus string
 
 const (
-	StatusAtivo    UserStatus = "ativo"
-	StatusPendente UserStatus = "pendente"
+	StatusAtivo     UserStatus = "ativo"
+	StatusPendente  UserStatus = "pendente"
 	StatusBloqueado UserStatus = "bloqueado"
 )
 
 type User struct {
-	ID           uuid.UUID  `json:"id"`
-	NomeCompleto string     `json:"nome_completo"`
-	Telefone     string     `json:"telefone"`
-	Email        string     `json:"email"`
-	PasswordHash string     `json:"-"`
-	DataNasc     string     `json:"data_nascimento"`
-	CidadeEstado string     `json:"cidade_estado"`
-	AceitouTermo bool       `json:"aceitou_termos"`
-	Role         UserRole   `json:"role"`
-	Status       UserStatus `json:"status"`
-	SaldoFichas  int64      `json:"saldo_fichas"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID           uuid.UUID      `json:"id"`
+	NomeCompleto string         `json:"nome_completo"`
+	Telefone     string         `json:"telefone"`
+	Email        string         `json:"email"`
+	PasswordHash string         `json:"-"`
+	DataNasc     string         `json:"data_nascimento"`
+	CidadeEstado string         `json:"cidade_estado"`
+	AceitouTermo bool           `json:"aceitou_termos"`
+	Role         UserRole       `json:"role"`
+	Status       UserStatus     `json:"status"`
+	SaldoFichas  int64          `json:"saldo_fichas"`
+	Wallet       *WalletSummary `json:"wallet,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+type WalletSummary struct {
+	BalanceCents   int64 `json:"balance_cents"`
+	AvailableCents int64 `json:"available_cents"`
+	ReservedCents  int64 `json:"reserved_cents"`
 }
 
 type LoginRequest struct {
-	Email      string `json:"email"`
-	Senha      string `json:"senha"`
-	LembrarMe  bool   `json:"lembrar_me"`
+	Email     string `json:"email"`
+	Senha     string `json:"senha"`
+	LembrarMe bool   `json:"lembrar_me"`
 }
 
 type RegisterRequest struct {

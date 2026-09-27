@@ -21,7 +21,6 @@ import type { HandEvaluation } from '../utils/pokerEngine';
 import { ChipStack, PokerChip } from '../components/poker/PokerChip';
 import { soundFX } from '../utils/audio';
 import { getTableRoomById, leaveTableSeatRemote } from '../utils/tableRooms';
-import { api } from '../services/api';
 
 type GameStage = 'WAITING' | 'DEALING' | 'PRE_FLOP' | 'FLOP' | 'TURN' | 'RIVER' | 'SHOWDOWN' | 'HAND_OVER';
 
@@ -91,7 +90,7 @@ const normalizeTableState = (payload: unknown): ServerTableState | null => {
 };
 
 export const PokerTablePage: React.FC = () => {
-  const { user, token, updateUser } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -842,21 +841,11 @@ export const PokerTablePage: React.FC = () => {
   const handleConfirmExit = async () => {
     if (isExiting) return;
     setIsExiting(true);
-    const remainingChips = userPlayer ? userPlayer.stack : 0;
     try {
+      await leaveTableSeatRemote(token, tableId, chosenSeat);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'LEAVE_TABLE' }));
       }
-      if (token && remainingChips > 0) {
-        const updatedUser = await api.cashOut(token, remainingChips);
-        updateUser(updatedUser);
-      } else if (user && remainingChips > 0) {
-        updateUser({
-          ...user,
-          saldo_fichas: user.saldo_fichas + remainingChips,
-        });
-      }
-      await leaveTableSeatRemote(token, tableId, chosenSeat);
     } catch (e) {
       console.warn('Erro ao processar cash-out:', e);
     }

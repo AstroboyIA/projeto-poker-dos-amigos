@@ -8,6 +8,7 @@ import { PlayerDashboard } from './pages/PlayerDashboard';
 import { TableLobbyPage } from './pages/TableLobby';
 import { SeatSelectionPage } from './pages/SeatSelection';
 import { PokerTablePage } from './pages/PokerTable';
+import { WalletPage } from './pages/Wallet';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { loading } = useAuth();
@@ -74,6 +75,7 @@ export function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

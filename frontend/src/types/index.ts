@@ -42,6 +42,7 @@ export interface PokerTable {
   occupied_seats?: number[];
   password?: string;
   created_by?: string;
+  creator_user_id?: string;
   community_cards?: Card[];
 }
 
@@ -131,4 +132,3 @@ export interface PlayerActionPayload {
 export interface PrivateCardsPayload {
   cards: Card[];
 }
-

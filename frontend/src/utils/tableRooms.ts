@@ -15,6 +15,7 @@ export interface TableRoom {
   occupiedSeats: number[];
   password?: string;
   createdBy: string;
+  creatorUserId?: string;
   createdAt: string;
 }
 
@@ -33,6 +34,7 @@ export const pokerTableToRoom = (table: PokerTable): TableRoom => {
     occupiedSeats: table.occupied_seats || [],
     password: table.password,
     createdBy: table.created_by || 'Clube',
+    creatorUserId: table.creator_user_id,
     createdAt: new Date().toISOString(),
   };
 };
@@ -54,22 +56,17 @@ export const saveCachedTableRooms = (tables: TableRoom[]) => {
 
 export const fetchRemoteTables = async (token?: string | null): Promise<TableRoom[]> => {
   if (!token) return getCachedTableRooms();
-  try {
-    const serverTables = await api.getTables(token);
-    const rooms = serverTables.map(pokerTableToRoom);
-    saveCachedTableRooms(rooms);
-    return rooms;
-  } catch (err) {
-    console.warn('Erro ao buscar mesas remotas, usando cache local:', err);
-    return getCachedTableRooms();
-  }
+  const serverTables = await api.getTables(token);
+  const rooms = serverTables.map(pokerTableToRoom);
+  saveCachedTableRooms(rooms);
+  return rooms;
 };
 
 export const createRemoteTable = async (
   token: string,
   table: Omit<TableRoom, 'id' | 'createdAt'>
 ): Promise<TableRoom> => {
-  try {
+  if (token) {
     const created = await api.createTable(token, {
       nome: table.name,
       small_blind: table.smallBlind,
@@ -86,8 +83,7 @@ export const createRemoteTable = async (
     const existing = getCachedTableRooms().filter((t) => t.id !== room.id);
     saveCachedTableRooms([room, ...existing]);
     return room;
-  } catch (err) {
-    console.error('Falha ao criar mesa no backend, fallback local:', err);
+  } else {
     const fallbackRoom: TableRoom = {
       ...table,
       id: `mesa-${Date.now()}`,
@@ -109,7 +105,11 @@ export const countAvailableSeats = (table: TableRoom) => {
 
 export const occupyTableSeatRemote = async (token: string | null, tableId: string, seatNumber: number) => {
   if (token) {
-    await api.occupySeat(token, tableId, seatNumber);
+    const updatedTable = await api.occupySeat(token, tableId, seatNumber);
+    const updatedRoom = pokerTableToRoom(updatedTable);
+    const tables = getCachedTableRooms().map((table) => table.id === tableId ? updatedRoom : table);
+    saveCachedTableRooms(tables);
+    return updatedRoom;
   }
   const tables = getCachedTableRooms();
   const updated = tables.map((table) => {
@@ -124,11 +124,7 @@ export const occupyTableSeatRemote = async (token: string | null, tableId: strin
 
 export const leaveTableSeatRemote = async (token: string | null, tableId: string, seatNumber: number) => {
   if (token) {
-    try {
-      await api.leaveSeat(token, tableId, seatNumber);
-    } catch (e) {
-      console.warn('Erro ao desocupar assento remoto:', e);
-    }
+    await api.leaveSeat(token, tableId, seatNumber);
   }
   const updated = getCachedTableRooms().flatMap((table) => {
     if (table.id !== tableId) return [table];
