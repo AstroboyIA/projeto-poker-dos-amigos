@@ -320,6 +320,8 @@ export const PokerTablePage: React.FC = () => {
   const [ownCards, setOwnCards] = useState<Card[]>([]);
   const [isWaitingForAction, setIsWaitingForAction] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const previousServerTurnRef = useRef<number | null>(null);
+  const previousServerStageRef = useRef<GameStage | null>(null);
 
   // WebSocket Integration para Multiplayer Autoritativo
   useEffect(() => {
@@ -346,6 +348,7 @@ export const PokerTablePage: React.FC = () => {
             table_id: tableId,
             seat_number: chosenSeat,
             buy_in: initialBuyIn,
+            bot_seats: Array.from(configuredBotSeats),
           },
         };
         socket?.send(JSON.stringify(joinMsg));
@@ -454,7 +457,13 @@ export const PokerTablePage: React.FC = () => {
     } else if (serverState.current_turn_idx >= mappedPlayers.length) {
       setCurrentTurnIdx(0);
     }
-    setActionTimer(MAX_ACTION_TIME);
+    setActionTimer((previous) => {
+      const turnChanged = previousServerTurnRef.current !== serverState.current_turn_idx;
+      const stageChanged = previousServerStageRef.current !== serverState.stage;
+      previousServerTurnRef.current = serverState.current_turn_idx;
+      previousServerStageRef.current = serverState.stage;
+      return turnChanged || stageChanged ? MAX_ACTION_TIME : previous;
+    });
   };
 
   useEffect(() => {

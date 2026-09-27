@@ -104,11 +104,46 @@ func TestJoinPlayerRejectsOccupiedSeatWithoutChangingTable(t *testing.T) {
 	if err := table.JoinPlayer(firstUser, "Primeiro", 1, 2000); err != nil {
 		t.Fatalf("primeiro jogador não entrou: %v", err)
 	}
+
 	if err := table.JoinPlayer(secondUser, "Segundo", 1, 2000); err == nil {
 		t.Fatal("esperava erro ao tentar ocupar assento já utilizado")
 	}
 
 	if state := table.GetPublicState(); len(state.Players) != 1 {
 		t.Fatalf("a mesa foi alterada após entrada inválida: %d jogadores", len(state.Players))
+	}
+}
+
+func TestBotActionAdvancesTurnAfterHumanAction(t *testing.T) {
+	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
+	userID := uuid.New()
+
+	if err := table.JoinPlayer(userID, "Jogador", 1, 2000); err != nil {
+		t.Fatalf("jogador não entrou: %v", err)
+	}
+	if err := table.AddBot(2, "Bot #2", 2000); err != nil {
+		t.Fatalf("bot não entrou: %v", err)
+	}
+
+	state := table.GetPublicState()
+	current := state.Players[state.CurrentTurnIdx]
+	if current.UserID == nil {
+		t.Fatalf("esperava que o jogador humano fosse o primeiro a agir")
+	}
+
+	if err := table.ProcessAction(*current.UserID, engine.ActionCall, 0); err != nil {
+		t.Fatalf("call do jogador falhou: %v", err)
+	}
+	afterHuman := table.GetPublicState()
+	if !afterHuman.Players[afterHuman.CurrentTurnIdx].IsBot {
+		t.Fatalf("esperava turno do bot após call, estado: %+v", afterHuman)
+	}
+
+	if err := table.ProcessBotAction(); err != nil {
+		t.Fatalf("ação do bot falhou: %v", err)
+	}
+	afterBot := table.GetPublicState()
+	if afterBot.Players[afterBot.CurrentTurnIdx].IsBot {
+		t.Fatalf("bot não deveria permanecer no turno após agir")
 	}
 }

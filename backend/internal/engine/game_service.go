@@ -245,6 +245,42 @@ func (tg *TableGame) AddBot(seatNumber int, name string, stack int64) error {
 	return nil
 }
 
+func (tg *TableGame) ProcessBotAction() error {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if tg.Stage == StageWaiting || tg.Stage == StageShowdown || tg.Stage == StageHandOver {
+		return fmt.Errorf("mesa não está em rodada de apostas")
+	}
+	if tg.CurrentTurnIdx < 0 || tg.CurrentTurnIdx >= len(tg.Players) {
+		return fmt.Errorf("índice de turno inválido")
+	}
+	player := tg.Players[tg.CurrentTurnIdx]
+	if !player.IsBot || player.HasFolded || player.IsAllIn {
+		return fmt.Errorf("não é a vez de um bot")
+	}
+
+	player.HasActed = true
+	if player.CurrentBet < tg.CurrentBet {
+		needed := tg.CurrentBet - player.CurrentBet
+		if needed > player.Stack {
+			needed = player.Stack
+		}
+		player.Stack -= needed
+		player.CurrentBet += needed
+		tg.Pot += needed
+		if player.Stack == 0 {
+			player.IsAllIn = true
+		}
+		player.LastAction = fmt.Sprintf("Pagou $%d (Call)", needed)
+	} else {
+		player.LastAction = "Passou a vez (Check)"
+	}
+
+	tg.checkRoundOrSurvivorLocked()
+	return nil
+}
+
 // Remove jogador da mesa
 func (tg *TableGame) LeavePlayer(userID uuid.UUID) bool {
 	_, removed := tg.LeavePlayerWithStack(userID)

@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -48,6 +49,7 @@ type JoinTablePayload struct {
 	TableID    string `json:"table_id"`
 	SeatNumber int    `json:"seat_number"`
 	BuyIn      int64  `json:"buy_in"`
+	BotSeats   []int  `json:"bot_seats,omitempty"`
 }
 
 type PlayerActionPayload struct {
@@ -290,7 +292,7 @@ func (c *Client) readPump() {
 				if err := json.Unmarshal(msg.Payload, &joinPayload); err == nil {
 					tid, err := uuid.Parse(joinPayload.TableID)
 					if err == nil {
-						c.handleJoinTable(tid, joinPayload.SeatNumber, joinPayload.BuyIn)
+						c.handleJoinTable(tid, joinPayload.SeatNumber, joinPayload.BuyIn, joinPayload.BotSeats)
 					}
 				}
 
@@ -307,7 +309,7 @@ func (c *Client) readPump() {
 	}
 }
 
-func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64) {
+func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64, botSeats []int) {
 	if c.Hub.gameService == nil {
 		c.sendError("Serviço da mesa indisponível")
 		return
@@ -325,6 +327,14 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64)
 	if err := table.JoinPlayer(c.UserID, c.Nome, seatNumber, buyIn); err != nil {
 		c.sendError(err.Error())
 		return
+	}
+	for _, botSeat := range botSeats {
+		if botSeat == seatNumber {
+			continue
+		}
+		if err := table.AddBot(botSeat, fmt.Sprintf("Bot #%d", botSeat), buyIn); err != nil {
+			log.Printf("Bot não adicionado à mesa %s, assento %d: %v", tableID, botSeat, err)
+		}
 	}
 
 	c.Hub.mu.Lock()
@@ -350,6 +360,7 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64)
 	log.Printf("Jogador %s (%s) juntou-se à mesa %s no assento %d", c.Nome, c.UserID, tableID, seatNumber)
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
+	c.Hub.scheduleBotAction(tableID, table)
 }
 
 func (c *Client) sendError(message string) {
@@ -392,6 +403,7 @@ func (c *Client) handleLeaveTable() {
 		if table, ok := c.Hub.gameService.GetTable(tableID); ok {
 			table.LeavePlayer(c.UserID)
 			c.Hub.broadcastCurrentTableState(tableID, table)
+			c.Hub.scheduleBotAction(tableID, table)
 		}
 	}
 	if seatNumber > 0 && c.Hub.releaseSeat != nil {
@@ -418,9 +430,26 @@ func (c *Client) handlePlayerAction(action string, amount int64) {
 	}
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
+	c.Hub.scheduleBotAction(tableID, table)
 	if table.GetPublicState().Stage == engine.StageShowdown {
 		c.Hub.scheduleNextHand(tableID, table)
 	}
+
+}
+
+func (h *Hub) scheduleBotAction(tableID uuid.UUID, table *engine.TableGame) {
+	state := table.GetPublicState()
+	if state.CurrentTurnIdx < 0 || state.CurrentTurnIdx >= len(state.Players) || !state.Players[state.CurrentTurnIdx].IsBot {
+		return
+	}
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		if err := table.ProcessBotAction(); err != nil {
+			return
+		}
+		h.broadcastCurrentTableState(tableID, table)
+		h.scheduleBotAction(tableID, table)
+	}()
 }
 
 func (h *Hub) scheduleNextHand(tableID uuid.UUID, table *engine.TableGame) {
