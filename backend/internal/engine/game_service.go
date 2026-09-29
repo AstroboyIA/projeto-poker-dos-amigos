@@ -108,6 +108,7 @@ type TableGame struct {
 	Deck           []models.Card
 	WinnerMessage  string
 	Shuffler       *PhysicalMemoryShuffler
+	rebuyRequests  map[string]struct{}
 	mu             sync.Mutex
 }
 
@@ -165,9 +166,6 @@ func (tg *TableGame) JoinPlayer(userID uuid.UUID, name string, seatNumber int, b
 		if p.UserID != nil && *p.UserID == userID {
 			p.SeatNumber = seatNumber
 			p.Name = name
-			if p.Stack <= 0 && buyIn > 0 {
-				p.Stack = buyIn
-			}
 			return nil
 		}
 	}
@@ -205,10 +203,6 @@ func (tg *TableGame) JoinPlayer(userID uuid.UUID, name string, seatNumber int, b
 		return tg.Players[i].SeatNumber < tg.Players[j].SeatNumber
 	})
 
-	if len(tg.Players) >= 2 && tg.Stage == StageWaiting {
-		tg.startNewHandLocked()
-	}
-
 	return nil
 }
 
@@ -217,6 +211,9 @@ func (tg *TableGame) AddBot(seatNumber int, name string, stack int64) error {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
 
+	if tg.Stage != StageWaiting {
+		return fmt.Errorf("bots só podem entrar antes do início da partida")
+	}
 	for _, p := range tg.Players {
 		if p.SeatNumber == seatNumber {
 			return fmt.Errorf("assento %d já ocupado", seatNumber)
@@ -238,10 +235,25 @@ func (tg *TableGame) AddBot(seatNumber int, name string, stack int64) error {
 		return tg.Players[i].SeatNumber < tg.Players[j].SeatNumber
 	})
 
-	if len(tg.Players) >= 2 && tg.Stage == StageWaiting {
-		tg.startNewHandLocked()
-	}
+	return nil
+}
 
+func (tg *TableGame) Start() error {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if tg.Stage != StageWaiting {
+		return fmt.Errorf("mesa já foi iniciada")
+	}
+	if len(tg.Players) < 2 {
+		return fmt.Errorf("são necessários ao menos 2 jogadores para iniciar")
+	}
+	for _, player := range tg.Players {
+		if player.Stack <= 0 {
+			return fmt.Errorf("%s precisa de fichas para iniciar", player.Name)
+		}
+	}
+	tg.startNewHandLocked()
 	return nil
 }
 
@@ -335,10 +347,67 @@ func (tg *TableGame) LeavePlayerWithStack(userID uuid.UUID) (int64, bool) {
 	return player.Stack, true
 }
 
-func (tg *TableGame) StartNewHand() {
+func (tg *TableGame) StartNewHand() error {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
+	if tg.Stage != StageShowdown && tg.Stage != StageHandOver {
+		return fmt.Errorf("a mão atual ainda não terminou")
+	}
+	for _, player := range tg.Players {
+		if !player.IsBot && player.Stack <= 0 {
+			return fmt.Errorf("%s precisa recarregar ou sair da mesa", player.Name)
+		}
+	}
+	tg.removeBustedBotsLocked()
+	if len(tg.Players) < 2 {
+		tg.Stage = StageWaiting
+		return fmt.Errorf("são necessários ao menos 2 jogadores para iniciar a próxima mão")
+	}
 	tg.startNewHandLocked()
+	return nil
+}
+
+func (tg *TableGame) AddStack(userID uuid.UUID, amount int64, requestID string) error {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	if amount <= 0 {
+		return fmt.Errorf("valor de recarga inválido")
+	}
+	if requestID == "" {
+		return fmt.Errorf("identificador de recarga inválido")
+	}
+	if _, exists := tg.rebuyRequests[requestID]; exists {
+		return nil
+	}
+	if tg.Stage != StageWaiting && tg.Stage != StageShowdown && tg.Stage != StageHandOver {
+		return fmt.Errorf("aguarde o fim da mão para recarregar")
+	}
+	for _, player := range tg.Players {
+		if player.UserID != nil && *player.UserID == userID {
+			if player.Stack > 0 {
+				return fmt.Errorf("o jogador ainda possui fichas")
+			}
+			player.Stack += amount
+			player.IsAllIn = false
+			if tg.rebuyRequests == nil {
+				tg.rebuyRequests = make(map[string]struct{})
+			}
+			tg.rebuyRequests[requestID] = struct{}{}
+			return nil
+		}
+	}
+	return fmt.Errorf("jogador não está sentado nesta mesa")
+}
+
+func (tg *TableGame) removeBustedBotsLocked() {
+	players := tg.Players[:0]
+	for _, player := range tg.Players {
+		if player.IsBot && player.Stack <= 0 {
+			continue
+		}
+		players = append(players, player)
+	}
+	tg.Players = players
 }
 
 func (tg *TableGame) startNewHandLocked() {

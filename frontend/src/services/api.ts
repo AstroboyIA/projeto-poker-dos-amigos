@@ -130,6 +130,7 @@ export const api = {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        'Idempotency-Key': crypto.randomUUID(),
       },
       body: JSON.stringify({ amount, table_id: tableId, seat_number: seatNumber }),
       signal: controller.signal,
@@ -145,6 +146,21 @@ export const api = {
     } finally {
       window.clearTimeout(timeout);
     }
+  },
+
+  async rebuy(token: string, amount: number, tableId: string): Promise<User> {
+    const res = await fetch(`${API_BASE}/chips/rebuy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ amount, table_id: tableId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao recarregar fichas');
+    return data.data;
   },
 
   async getWallet(token: string): Promise<{ wallet: { balance_cents: number; available_cents: number; reserved_cents: number }; ledger: Array<{ type: string; amount_cents: number; created_at: string }> }> {

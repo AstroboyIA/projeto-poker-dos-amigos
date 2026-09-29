@@ -40,7 +40,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "Idempotency-Key"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: false,
 		MaxAge:           300,
@@ -71,6 +71,7 @@ func main() {
 		r.Post("/api/tables/occupy", modulesHandler.OccupySeat)
 		r.Post("/api/tables/leave", modulesHandler.LeaveSeat)
 		r.Post("/api/chips/buy-in", modulesHandler.BuyIn)
+		r.Post("/api/chips/rebuy", modulesHandler.Rebuy)
 		r.Post("/api/chips/cash-out", modulesHandler.CashOut)
 		r.Get("/api/wallet", modulesHandler.GetWallet)
 		r.Post("/api/dev/wallet/deposit", modulesHandler.DevDeposit)

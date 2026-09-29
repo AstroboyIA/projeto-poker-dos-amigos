@@ -45,17 +45,19 @@ type Wallet struct {
 }
 
 type Service struct {
-	mu        sync.Mutex
-	wallets   map[uuid.UUID]*Wallet
-	ledger    map[uuid.UUID][]LedgerEntry
-	processed map[string]LedgerEntry
+	mu                sync.Mutex
+	wallets           map[uuid.UUID]*Wallet
+	ledger            map[uuid.UUID][]LedgerEntry
+	processed         map[string]LedgerEntry
+	tableReservations map[uuid.UUID]map[string]int64
 }
 
 func NewService() *Service {
 	return &Service{
-		wallets:   make(map[uuid.UUID]*Wallet),
-		ledger:    make(map[uuid.UUID][]LedgerEntry),
-		processed: make(map[string]LedgerEntry),
+		wallets:           make(map[uuid.UUID]*Wallet),
+		ledger:            make(map[uuid.UUID][]LedgerEntry),
+		processed:         make(map[string]LedgerEntry),
+		tableReservations: make(map[uuid.UUID]map[string]int64),
 	}
 }
 
@@ -88,12 +90,16 @@ func (s *Service) Entries(userID uuid.UUID) []LedgerEntry {
 	return entries
 }
 
+func processedKey(userID uuid.UUID, key string) string {
+	return userID.String() + ":" + key
+}
+
 func (s *Service) applyLocked(userID uuid.UUID, amount int64, kind TransactionType, referenceType, referenceID, key string) (Wallet, error) {
 	if amount <= 0 {
 		return Wallet{}, ErrInvalidAmount
 	}
 	if key != "" {
-		if _, ok := s.processed[key]; ok {
+		if _, ok := s.processed[processedKey(userID, key)]; ok {
 			return *s.wallets[userID], nil
 		}
 	}
@@ -109,6 +115,12 @@ func (s *Service) applyLocked(userID uuid.UUID, amount int64, kind TransactionTy
 		}
 		wallet.AvailableCents -= amount
 		wallet.ReservedCents += amount
+		if referenceType == "table" && referenceID != "" {
+			if s.tableReservations[userID] == nil {
+				s.tableReservations[userID] = make(map[string]int64)
+			}
+			s.tableReservations[userID][referenceID] += amount
+		}
 	} else {
 		wallet.AvailableCents += amount
 	}
@@ -117,7 +129,7 @@ func (s *Service) applyLocked(userID uuid.UUID, amount int64, kind TransactionTy
 	entry := LedgerEntry{ID: uuid.New(), UserID: userID, Type: kind, AmountCents: amount, BalanceBefore: before, BalanceAfter: wallet.BalanceCents, ReferenceType: referenceType, ReferenceID: referenceID, IdempotencyKey: key, CreatedAt: time.Now()}
 	s.ledger[userID] = append(s.ledger[userID], entry)
 	if key != "" {
-		s.processed[key] = entry
+		s.processed[processedKey(userID, key)] = entry
 	}
 	return *wallet, nil
 }
@@ -137,22 +149,60 @@ func (s *Service) BuyIn(userID uuid.UUID, cents int64, tableID, key string) (Wal
 func (s *Service) ReturnFromTable(userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	wallet, ok := s.wallets[userID]
+	if !ok {
+		return Wallet{}, errors.New("carteira não encontrada")
+	}
+	if cents < 0 {
+		return Wallet{}, ErrInvalidAmount
+	}
+	if key != "" {
+		if _, exists := s.processed[processedKey(userID, key)]; exists {
+			return *wallet, nil
+		}
+	}
+	reservedForTable := s.tableReservations[userID][tableID]
+	if reservedForTable > wallet.ReservedCents {
+		reservedForTable = wallet.ReservedCents
+	}
+	before := wallet.BalanceCents
+	wallet.ReservedCents -= reservedForTable
+	wallet.AvailableCents += cents
+	wallet.BalanceCents = wallet.AvailableCents + wallet.ReservedCents
+	wallet.UpdatedAt = time.Now()
+	entry := LedgerEntry{ID: uuid.New(), UserID: userID, Type: TableReturn, AmountCents: cents, BalanceBefore: before, BalanceAfter: wallet.BalanceCents, ReferenceType: "table", ReferenceID: tableID, IdempotencyKey: key, CreatedAt: time.Now()}
+	s.ledger[userID] = append(s.ledger[userID], entry)
+	delete(s.tableReservations[userID], tableID)
+	if key != "" {
+		s.processed[processedKey(userID, key)] = entry
+	}
+	return *wallet, nil
+}
+
+func (s *Service) RefundBuyIn(userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if cents <= 0 {
-		return s.GetUnlocked(userID)
+		return Wallet{}, ErrInvalidAmount
 	}
 	wallet, ok := s.wallets[userID]
 	if !ok {
 		return Wallet{}, errors.New("carteira não encontrada")
 	}
 	if key != "" {
-		if _, exists := s.processed[key]; exists {
+		if _, exists := s.processed[processedKey(userID, key)]; exists {
 			return *wallet, nil
 		}
 	}
-	if wallet.ReservedCents < cents {
-		cents = wallet.ReservedCents
+	reserved := s.tableReservations[userID][tableID]
+	if reserved < cents || wallet.ReservedCents < cents {
+		return Wallet{}, errors.New("buy-in reservado não encontrado para estorno")
 	}
 	before := wallet.BalanceCents
+	s.tableReservations[userID][tableID] -= cents
+	if s.tableReservations[userID][tableID] == 0 {
+		delete(s.tableReservations[userID], tableID)
+	}
 	wallet.ReservedCents -= cents
 	wallet.AvailableCents += cents
 	wallet.BalanceCents = wallet.AvailableCents + wallet.ReservedCents
@@ -160,7 +210,7 @@ func (s *Service) ReturnFromTable(userID uuid.UUID, cents int64, tableID, key st
 	entry := LedgerEntry{ID: uuid.New(), UserID: userID, Type: TableReturn, AmountCents: cents, BalanceBefore: before, BalanceAfter: wallet.BalanceCents, ReferenceType: "table", ReferenceID: tableID, IdempotencyKey: key, CreatedAt: time.Now()}
 	s.ledger[userID] = append(s.ledger[userID], entry)
 	if key != "" {
-		s.processed[key] = entry
+		s.processed[processedKey(userID, key)] = entry
 	}
 	return *wallet, nil
 }

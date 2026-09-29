@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -526,6 +527,88 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 	}
 	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
 	user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+	response.JSON(w, http.StatusOK, user)
+}
+
+func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	var req struct {
+		Amount  int64  `json:"amount"`
+		TableID string `json:"table_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 || req.TableID == "" {
+		response.Error(w, http.StatusBadRequest, "Dados de recarga inválidos")
+		return
+	}
+	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+	tableID, err := uuid.Parse(req.TableID)
+	if err != nil || h.hub == nil || h.hub.GameService() == nil {
+		response.Error(w, http.StatusBadRequest, "Mesa inválida")
+		return
+	}
+	table, exists := h.hub.GameService().GetTable(tableID)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+		return
+	}
+	h.mu.RLock()
+	var tableConfig *models.PokerTable
+	for i := range h.tables {
+		if h.tables[i].ID == tableID {
+			tableConfig = &h.tables[i]
+			break
+		}
+	}
+	if tableConfig == nil {
+		h.mu.RUnlock()
+		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+		return
+	}
+	if req.Amount < tableConfig.BuyInMin || req.Amount > tableConfig.BuyInMax {
+		h.mu.RUnlock()
+		response.Error(w, http.StatusBadRequest, "Recarga fora dos limites de buy-in da mesa")
+		return
+	}
+	h.mu.RUnlock()
+
+	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" {
+		key = uuid.NewString()
+	}
+	wallet, err := h.wallets.BuyIn(user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key)
+	if err != nil {
+		if err == finance.ErrInsufficientFunds {
+			response.Error(w, http.StatusBadRequest, "Saldo fora da mesa insuficiente para a recarga")
+			return
+		}
+		response.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := table.AddStack(user.ID, req.Amount, key); err != nil {
+		if _, refundErr := h.wallets.RefundBuyIn(user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key+":rollback"); refundErr != nil {
+			log.Printf("Falha ao estornar recarga recusada do usuário %s: %v", user.ID, refundErr)
+			response.Error(w, http.StatusInternalServerError, "Recarga recusada e estorno pendente; contate o suporte")
+			return
+		}
+		response.Error(w, http.StatusConflict, err.Error())
+		return
+	}
+	state := table.GetPublicState()
+	if state.Stage == "SHOWDOWN" || state.Stage == "HAND_OVER" {
+		_ = table.StartNewHand()
+	}
+	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+	user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+	h.hub.TableChanged(tableID, table)
 	response.JSON(w, http.StatusOK, user)
 }
 

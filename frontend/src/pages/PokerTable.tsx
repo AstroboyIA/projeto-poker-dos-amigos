@@ -10,8 +10,10 @@ import {
   Plus,
   LogOut,
   AlertTriangle,
+  Coins,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 import type { Card, ServerTableState, PrivateCardsPayload } from '../types';
 import {
   shuffleContinuousDeck,
@@ -90,7 +92,7 @@ const normalizeTableState = (payload: unknown): ServerTableState | null => {
 };
 
 export const PokerTablePage: React.FC = () => {
-  const { user, token } = useAuth();
+  const { user, token, updateUser, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -185,7 +187,7 @@ export const PokerTablePage: React.FC = () => {
   resolvedPlayers.sort((a, b) => a.seatNumber - b.seatNumber);
 
   const [players, setPlayers] = useState<TablePlayer[]>(resolvedPlayers);
-  const [stage, setStage] = useState<GameStage>(resolvedPlayers.length >= 2 ? 'DEALING' : 'WAITING');
+  const [stage, setStage] = useState<GameStage>('WAITING');
 
   const [handNumber, setHandNumber] = useState<number>(1);
   const [pot, setPot] = useState<number>(0);
@@ -201,6 +203,9 @@ export const PokerTablePage: React.FC = () => {
   const [winnerMessage, setWinnerMessage] = useState<string | null>(null);
   const [countdownNextHand, setCountdownNextHand] = useState<number>(5);
   const [showExitModal, setShowExitModal] = useState<boolean>(false);
+  const [rebuyAmount, setRebuyAmount] = useState<number>(room?.buyInMin || 1000);
+  const [isRebuying, setIsRebuying] = useState(false);
+  const [rebuyError, setRebuyError] = useState<string | null>(null);
   const [raiseAmount, setRaiseAmount] = useState<number>(bigBlindVal * 2);
 
   const addLog = (text: string) => {
@@ -226,6 +231,18 @@ export const PokerTablePage: React.FC = () => {
       freeSeat++;
     }
     if (freeSeat > 9) return;
+
+    if (isMultiplayerMode) {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        addLog('Aguarde a conexão com o servidor para adicionar um bot.');
+        return;
+      }
+      wsRef.current.send(JSON.stringify({
+        type: 'ADD_BOT',
+        payload: { seat_number: freeSeat, stack: initialBuyIn },
+      }));
+      return;
+    }
 
     const newBot: TablePlayer = {
       id: freeSeat,
@@ -470,26 +487,27 @@ export const PokerTablePage: React.FC = () => {
     soundFX.enabled = soundEnabled;
   }, [soundEnabled]);
 
-  useEffect(() => {
-    if (!isMultiplayerMode) {
-      if (players.length >= 2) {
-        startNewHand();
-      } else {
-        setStage('WAITING');
+  const handleStartTable = () => {
+    if (players.length < 2) return;
+    if (isMultiplayerMode) {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        addLog('Aguarde a conexão com o servidor para iniciar a mesa.');
+        return;
       }
+      wsRef.current.send(JSON.stringify({ type: 'START_TABLE' }));
+      return;
     }
-  }, [isMultiplayerMode]);
+    startNewHand();
+  };
 
   // 2. TEMPORIZADOR DE AÇÃO (Action Timer Clock de 20s)
   useEffect(() => {
-    if (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'DEALING') return;
+    if (stage === 'WAITING' || stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'DEALING') return;
 
     const interval = setInterval(() => {
       setActionTimer((prev) => {
         if (prev <= 1) {
-          if (!isMultiplayerMode) {
-            handleAutoTimeoutAction();
-          }
+          handleAutoTimeoutAction();
           return MAX_ACTION_TIME;
         }
         return prev - 1;
@@ -501,13 +519,8 @@ export const PokerTablePage: React.FC = () => {
 
   const handleAutoTimeoutAction = () => {
     const activePlayer = players[currentTurnIdx];
-    if (!activePlayer || activePlayer.hasFolded || activePlayer.isAllIn) return;
-
-    if (activePlayer.currentBet >= currentRoundBet) {
-      handlePlayerAction('CHECK');
-    } else {
-      handlePlayerAction('FOLD');
-    }
+    if (!activePlayer || !activePlayer.isUser || activePlayer.hasFolded || activePlayer.isAllIn) return;
+    handlePlayerAction('FOLD');
   };
 
   // 3. FLUXO DE INTELIGÊNCIA / RESPOSTA DE BOTS
@@ -847,7 +860,7 @@ export const PokerTablePage: React.FC = () => {
   const [isExiting, setIsExiting] = useState(false);
 
   // Saída Graciosa da Mesa com devolução (Cash-Out) de fichas
-  const handleConfirmExit = async () => {
+  const handleConfirmExit = async (destination?: string) => {
     if (isExiting) return;
     setIsExiting(true);
     try {
@@ -855,11 +868,26 @@ export const PokerTablePage: React.FC = () => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'LEAVE_TABLE' }));
       }
+      await refreshUser();
     } catch (e) {
       console.warn('Erro ao processar cash-out:', e);
     }
-    const dest = user?.role === 'admin_gerente' || user?.role === 'gerente' ? '/manager' : '/player';
+    const dest = destination || (user?.role === 'admin_gerente' || user?.role === 'gerente' ? '/manager' : '/player');
     navigate(dest);
+  };
+
+  const handleRebuy = async () => {
+    if (!token || isRebuying) return;
+    setIsRebuying(true);
+    setRebuyError(null);
+    try {
+      const updatedUser = await api.rebuy(token, rebuyAmount, tableId);
+      updateUser(updatedUser);
+    } catch (error) {
+      setRebuyError(error instanceof Error ? error.message : 'Falha ao recarregar fichas.');
+    } finally {
+      setIsRebuying(false);
+    }
   };
 
   // Botões de Fichas Rápidas para Apostas
@@ -879,7 +907,19 @@ export const PokerTablePage: React.FC = () => {
   };
 
   const userPlayer = players.find((p) => p.isUser);
-  const isUserTurn = currentTurnIdx === players.findIndex((p) => p.isUser) && stage !== 'SHOWDOWN' && stage !== 'HAND_OVER';
+  const isUserTurn =
+    currentTurnIdx === players.findIndex((p) => p.isUser) &&
+    stage !== 'WAITING' &&
+    stage !== 'DEALING' &&
+    stage !== 'SHOWDOWN' &&
+    stage !== 'HAND_OVER';
+  const availableRebuy = Math.min(room?.buyInMax || 5000, user?.saldo_fichas || 0);
+  const minimumRebuy = room?.buyInMin || 1000;
+  const requiresRebuyDecision = Boolean(
+    userPlayer &&
+    userPlayer.stack <= 0 &&
+    (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'WAITING')
+  );
   const toCallAmount = userPlayer ? Math.max(0, currentRoundBet - userPlayer.currentBet) : 0;
   const canCheck = toCallAmount === 0;
 
@@ -990,10 +1030,65 @@ export const PokerTablePage: React.FC = () => {
               </button>
               <button
                 disabled={isExiting}
-                onClick={handleConfirmExit}
+                onClick={() => void handleConfirmExit()}
                 className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-xs font-extrabold text-white uppercase tracking-wider transition shadow-lg cursor-pointer disabled:opacity-50"
               >
                 {isExiting ? 'CASH-OUT...' : 'SIM, SAIR'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {requiresRebuyDecision && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
+          <div className="w-full max-w-md rounded-2xl border-2 border-amber-400/80 bg-[#12151d] p-6 text-center shadow-[0_0_40px_rgba(245,158,11,0.25)] space-y-4">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-amber-400 bg-amber-950/70 text-amber-300">
+              <Coins size={24} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-extrabold uppercase tracking-wider text-white">Você ficou sem fichas</h3>
+              <p className="text-xs leading-relaxed text-zinc-300">
+                Recarregue usando seu saldo fora da mesa ou saia agora. A próxima mão aguarda sua decisão.
+              </p>
+            </div>
+            <label className="block space-y-1 text-left text-xs font-bold text-zinc-300">
+              Valor da recarga
+              <input
+                type="number"
+                min={minimumRebuy}
+                max={availableRebuy}
+                step={1}
+                value={rebuyAmount}
+                onChange={(event) => setRebuyAmount(Number(event.target.value))}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-[#d4af37]"
+              />
+              <span className="block text-[11px] font-normal text-zinc-400">
+                Disponível fora da mesa: {user?.saldo_fichas?.toLocaleString('pt-BR') || 0} fichas • Limite da mesa: {room?.buyInMax || 5000}
+              </span>
+            </label>
+            {rebuyError && <p className="text-xs text-red-300">{rebuyError}</p>}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <button
+                disabled={isRebuying || rebuyAmount < minimumRebuy || rebuyAmount > availableRebuy}
+                onClick={() => void handleRebuy()}
+                className="rounded-xl gold-btn px-3 py-2.5 text-xs font-extrabold uppercase text-black disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isRebuying ? 'RECARREGANDO...' : 'RECARREGAR'}
+              </button>
+              <button
+                disabled={isExiting}
+                onClick={() => void handleConfirmExit('/wallet')}
+                className="rounded-xl border border-emerald-500 bg-emerald-950 px-3 py-2.5 text-xs font-extrabold uppercase text-emerald-200 hover:bg-emerald-900 disabled:opacity-50"
+              >
+                COMPRAR FICHAS
+              </button>
+              <button
+                disabled={isExiting}
+                onClick={() => void handleConfirmExit()}
+                className="rounded-xl border border-red-500 bg-red-950 px-3 py-2.5 text-xs font-extrabold uppercase text-red-200 hover:bg-red-900 disabled:opacity-50"
+              >
+                SAIR DA MESA
               </button>
             </div>
           </div>
@@ -1084,10 +1179,11 @@ export const PokerTablePage: React.FC = () => {
                 {players.length >= 2 && (
                   <button
                     type="button"
-                    onClick={() => startNewHand()}
+                    onClick={handleStartTable}
+                    disabled={isMultiplayerMode && !wsConnected}
                     className="w-full py-2.5 rounded-xl gold-btn text-black font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-lg hover:scale-105 transition"
                   >
-                    ▶️ INICIAR PARTIDA AGORA
+                    ▶️ INICIAR MESA
                   </button>
                 )}
 
@@ -1107,7 +1203,12 @@ export const PokerTablePage: React.FC = () => {
           {/* Renderização dos jogadores sentados ao redor da mesa com Temporizador de 20s */}
           {players.map((p, idx) => {
             const pos = seatPositions[p.seatNumber - 1] || seatPositions[0];
-            const isTurn = currentTurnIdx === idx && stage !== 'SHOWDOWN' && stage !== 'HAND_OVER';
+            const isTurn =
+              currentTurnIdx === idx &&
+              stage !== 'WAITING' &&
+              stage !== 'DEALING' &&
+              stage !== 'SHOWDOWN' &&
+              stage !== 'HAND_OVER';
             const showCards = stage === 'SHOWDOWN' && !p.hasFolded;
 
             const posStyle: React.CSSProperties = {

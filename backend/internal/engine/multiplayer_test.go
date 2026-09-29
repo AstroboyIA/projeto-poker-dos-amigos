@@ -30,7 +30,7 @@ func TestGameServiceTwoPlayersSync(t *testing.T) {
 		t.Fatalf("Esperava StageWaiting com 1 jogador, obteve %s", state1.Stage)
 	}
 
-	// 2. Jogador B entra -> Mesa deve iniciar partida automaticamente
+	// 2. Jogador B entra -> Mesa continua aguardando início manual
 	err = table.JoinPlayer(userB, "Jogador B", 2, 2000)
 	if err != nil {
 		t.Fatalf("Erro ao entrar Jogador B: %v", err)
@@ -40,8 +40,15 @@ func TestGameServiceTwoPlayersSync(t *testing.T) {
 	if len(state2.Players) != 2 {
 		t.Fatalf("Esperava 2 jogadores, obteve %d", len(state2.Players))
 	}
+	if state2.Stage != engine.StageWaiting {
+		t.Fatalf("a mesa não deveria iniciar automaticamente, estágio: %s", state2.Stage)
+	}
+	if err := table.Start(); err != nil {
+		t.Fatalf("não foi possível iniciar a mesa manualmente: %v", err)
+	}
+	state2 = table.GetPublicState()
 	if state2.Stage != engine.StagePreFlop {
-		t.Fatalf("Esperava StagePreFlop com 2 jogadores, obteve %s", state2.Stage)
+		t.Fatalf("esperava StagePreFlop após início manual, obteve %s", state2.Stage)
 	}
 	if state2.Pot != 75 {
 		t.Fatalf("Esperava Pote inicial de 75 (SB 25 + BB 50), obteve %d", state2.Pot)
@@ -124,6 +131,12 @@ func TestBotActionAdvancesTurnAfterHumanAction(t *testing.T) {
 	if err := table.AddBot(2, "Bot #2", 2000); err != nil {
 		t.Fatalf("bot não entrou: %v", err)
 	}
+	if state := table.GetPublicState(); state.Stage != engine.StageWaiting {
+		t.Fatalf("adicionar um bot não deve iniciar a partida automaticamente: %s", state.Stage)
+	}
+	if err := table.Start(); err != nil {
+		t.Fatalf("não foi possível iniciar a mesa com bot: %v", err)
+	}
 
 	state := table.GetPublicState()
 	current := state.Players[state.CurrentTurnIdx]
@@ -145,5 +158,31 @@ func TestBotActionAdvancesTurnAfterHumanAction(t *testing.T) {
 	afterBot := table.GetPublicState()
 	if afterBot.Players[afterBot.CurrentTurnIdx].IsBot {
 		t.Fatalf("bot não deveria permanecer no turno após agir")
+	}
+}
+
+func TestRebuyIsIdempotent(t *testing.T) {
+	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
+	userID := uuid.New()
+	if err := table.JoinPlayer(userID, "Jogador", 1, 2000); err != nil {
+		t.Fatalf("jogador não entrou: %v", err)
+	}
+	if err := table.JoinPlayer(uuid.New(), "Adversário", 2, 2000); err != nil {
+		t.Fatalf("adversário não entrou: %v", err)
+	}
+	if err := table.Start(); err != nil {
+		t.Fatalf("mesa não iniciou: %v", err)
+	}
+
+	table.Stage = engine.StageShowdown
+	table.Players[0].Stack = 0
+	if err := table.AddStack(userID, 500, "rebuy-1"); err != nil {
+		t.Fatalf("recarga falhou: %v", err)
+	}
+	if err := table.AddStack(userID, 500, "rebuy-1"); err != nil {
+		t.Fatalf("repetição idempotente falhou: %v", err)
+	}
+	if stack := table.GetPublicState().Players[0].Stack; stack != 500 {
+		t.Fatalf("repetição da recarga alterou indevidamente o stack: %d", stack)
 	}
 }

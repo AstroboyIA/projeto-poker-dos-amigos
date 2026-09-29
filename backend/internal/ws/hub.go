@@ -28,6 +28,8 @@ type MessageType string
 const (
 	MsgJoinTable    MessageType = "JOIN_TABLE"
 	MsgLeaveTable   MessageType = "LEAVE_TABLE"
+	MsgStartTable   MessageType = "START_TABLE"
+	MsgAddBot       MessageType = "ADD_BOT"
 	MsgPlayerAct    MessageType = "PLAYER_ACTION"
 	MsgTableState   MessageType = "TABLE_STATE"
 	MsgError        MessageType = "ERROR"
@@ -57,6 +59,11 @@ type PlayerActionPayload struct {
 	Amount int64  `json:"amount,omitempty"`
 }
 
+type AddBotPayload struct {
+	SeatNumber int   `json:"seat_number"`
+	Stack      int64 `json:"stack"`
+}
+
 type PrivateCardsPayload struct {
 	Cards []models.Card `json:"cards"`
 }
@@ -79,6 +86,8 @@ type Hub struct {
 	unregister  chan *Client
 	gameService *engine.GameService
 	releaseSeat func(uuid.UUID, int)
+	turnTimers  map[uuid.UUID]uint64
+	turnTimeout time.Duration
 	mu          sync.RWMutex
 }
 
@@ -90,6 +99,8 @@ func NewHub(gameService *engine.GameService) *Hub {
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		gameService: gameService,
+		turnTimers:  make(map[uuid.UUID]uint64),
+		turnTimeout: 20 * time.Second,
 	}
 }
 
@@ -129,7 +140,7 @@ func (h *Hub) Run() {
 					if h.gameService != nil {
 						if table, ok := h.gameService.GetTable(tid); ok {
 							table.LeavePlayer(client.UserID)
-							go h.broadcastCurrentTableState(tid, table)
+							go h.handlePlayerDeparture(tid, table)
 						}
 					}
 				}
@@ -299,6 +310,15 @@ func (c *Client) readPump() {
 			case MsgLeaveTable:
 				c.handleLeaveTable()
 
+			case MsgStartTable:
+				c.handleStartTable()
+
+			case MsgAddBot:
+				var botPayload AddBotPayload
+				if err := json.Unmarshal(msg.Payload, &botPayload); err == nil {
+					c.handleAddBot(botPayload)
+				}
+
 			case MsgPlayerAct:
 				var actPayload PlayerActionPayload
 				if err := json.Unmarshal(msg.Payload, &actPayload); err == nil {
@@ -361,6 +381,49 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64,
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
 	c.Hub.scheduleBotAction(tableID, table)
+	c.Hub.scheduleTurnTimeout(tableID, table)
+}
+
+func (c *Client) handleStartTable() {
+	if c.TableID == nil || c.Hub.gameService == nil {
+		c.sendError("Entre na mesa antes de iniciá-la")
+		return
+	}
+	tableID := *c.TableID
+	table, ok := c.Hub.gameService.GetTable(tableID)
+	if !ok {
+		c.sendError("Mesa não encontrada")
+		return
+	}
+	if err := table.Start(); err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	c.Hub.broadcastCurrentTableState(tableID, table)
+	c.Hub.scheduleBotAction(tableID, table)
+	c.Hub.scheduleTurnTimeout(tableID, table)
+}
+
+func (c *Client) handleAddBot(payload AddBotPayload) {
+	if c.TableID == nil || c.Hub.gameService == nil {
+		c.sendError("Entre na mesa antes de adicionar um bot")
+		return
+	}
+	if payload.Stack <= 0 || payload.SeatNumber < 1 || payload.SeatNumber > 9 {
+		c.sendError("Assento ou stack do bot inválido")
+		return
+	}
+	tableID := *c.TableID
+	table, ok := c.Hub.gameService.GetTable(tableID)
+	if !ok {
+		c.sendError("Mesa não encontrada")
+		return
+	}
+	if err := table.AddBot(payload.SeatNumber, fmt.Sprintf("Bot #%d", payload.SeatNumber), payload.Stack); err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	c.Hub.broadcastCurrentTableState(tableID, table)
 }
 
 func (c *Client) sendError(message string) {
@@ -402,12 +465,24 @@ func (c *Client) handleLeaveTable() {
 	if c.Hub.gameService != nil {
 		if table, ok := c.Hub.gameService.GetTable(tableID); ok {
 			table.LeavePlayer(c.UserID)
-			c.Hub.broadcastCurrentTableState(tableID, table)
-			c.Hub.scheduleBotAction(tableID, table)
+			c.Hub.handlePlayerDeparture(tableID, table)
 		}
 	}
 	if seatNumber > 0 && c.Hub.releaseSeat != nil {
 		c.Hub.releaseSeat(tableID, seatNumber)
+	}
+}
+
+func (h *Hub) handlePlayerDeparture(tableID uuid.UUID, table *engine.TableGame) {
+	state := table.GetPublicState()
+	if state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver {
+		_ = table.StartNewHand()
+	}
+	h.broadcastCurrentTableState(tableID, table)
+	h.scheduleBotAction(tableID, table)
+	h.scheduleTurnTimeout(tableID, table)
+	if table.GetPublicState().Stage == engine.StageShowdown {
+		h.scheduleNextHand(tableID, table)
 	}
 }
 
@@ -431,6 +506,7 @@ func (c *Client) handlePlayerAction(action string, amount int64) {
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
 	c.Hub.scheduleBotAction(tableID, table)
+	c.Hub.scheduleTurnTimeout(tableID, table)
 	if table.GetPublicState().Stage == engine.StageShowdown {
 		c.Hub.scheduleNextHand(tableID, table)
 	}
@@ -449,6 +525,53 @@ func (h *Hub) scheduleBotAction(tableID uuid.UUID, table *engine.TableGame) {
 		}
 		h.broadcastCurrentTableState(tableID, table)
 		h.scheduleBotAction(tableID, table)
+		h.scheduleTurnTimeout(tableID, table)
+		if table.GetPublicState().Stage == engine.StageShowdown {
+			h.scheduleNextHand(tableID, table)
+		}
+	}()
+}
+
+func (h *Hub) scheduleTurnTimeout(tableID uuid.UUID, table *engine.TableGame) {
+	state := table.GetPublicState()
+	if state.Stage == engine.StageWaiting || state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver ||
+		state.CurrentTurnIdx < 0 || state.CurrentTurnIdx >= len(state.Players) {
+		return
+	}
+	player := state.Players[state.CurrentTurnIdx]
+	if player.IsBot || player.UserID == nil {
+		return
+	}
+
+	h.mu.Lock()
+	h.turnTimers[tableID]++
+	generation := h.turnTimers[tableID]
+	h.mu.Unlock()
+
+	go func() {
+		time.Sleep(h.turnTimeout)
+		h.mu.RLock()
+		isCurrent := h.turnTimers[tableID] == generation
+		h.mu.RUnlock()
+		if !isCurrent {
+			return
+		}
+		current := table.GetPublicState()
+		if current.Stage != state.Stage || current.HandNumber != state.HandNumber ||
+			current.CurrentTurnIdx != state.CurrentTurnIdx || current.CurrentTurnIdx >= len(current.Players) ||
+			current.Players[current.CurrentTurnIdx].UserID == nil ||
+			*current.Players[current.CurrentTurnIdx].UserID != *player.UserID {
+			return
+		}
+		if err := table.ProcessAction(*player.UserID, engine.ActionFold, 0); err != nil {
+			return
+		}
+		h.broadcastCurrentTableState(tableID, table)
+		h.scheduleBotAction(tableID, table)
+		h.scheduleTurnTimeout(tableID, table)
+		if table.GetPublicState().Stage == engine.StageShowdown {
+			h.scheduleNextHand(tableID, table)
+		}
 	}()
 }
 
@@ -463,9 +586,22 @@ func (h *Hub) scheduleNextHand(tableID uuid.UUID, table *engine.TableGame) {
 			return
 		}
 
-		table.StartNewHand()
+		if err := table.StartNewHand(); err != nil {
+			return
+		}
 		h.broadcastCurrentTableState(tableID, table)
+		h.scheduleBotAction(tableID, table)
+		h.scheduleTurnTimeout(tableID, table)
 	}()
+}
+
+func (h *Hub) TableChanged(tableID uuid.UUID, table *engine.TableGame) {
+	h.broadcastCurrentTableState(tableID, table)
+	h.scheduleBotAction(tableID, table)
+	h.scheduleTurnTimeout(tableID, table)
+	if table.GetPublicState().Stage == engine.StageShowdown {
+		h.scheduleNextHand(tableID, table)
+	}
 }
 
 func (c *Client) writePump() {
