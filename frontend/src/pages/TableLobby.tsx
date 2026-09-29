@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bot, CheckCircle2, Coins, Lock, Plus, ShieldCheck, Unlock, Users, X, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Coins, Lock, Plus, ShieldCheck, Unlock, Users, X, RefreshCw } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -10,7 +10,6 @@ import {
   getCachedTableRooms,
   pokerTableToRoom,
   saveCachedTableRooms,
-  type SeatMode,
   type TableRoom,
 } from '../utils/tableRooms';
 import type { PokerTable } from '../types';
@@ -187,29 +186,25 @@ export const TableLobbyPage: React.FC = () => {
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs">
                 <InfoTile icon={<Users size={14} />} label="Jogadores" value={`${table.occupiedSeats.length}/${table.maxSeats}`} />
-                <InfoTile icon={<Bot size={14} />} label="Bots" value={`${table.botSeats.length}`} />
                 <InfoTile icon={<Coins size={14} />} label="Blinds" value={`$${table.smallBlind}/$${table.bigBlind}`} />
               </div>
 
               <div className="flex flex-wrap gap-1.5">
                 {seats.map((seat) => {
                   const isOccupied = table.occupiedSeats.includes(seat);
-                  const isBot = table.botSeats.includes(seat);
                   return (
                     <span
                       key={seat}
                       className={`w-8 h-8 rounded-full border flex items-center justify-center text-[10px] font-extrabold ${
                         isOccupied
                           ? 'bg-zinc-800 border-zinc-500 text-zinc-200'
-                          : isBot
-                            ? 'bg-[#d4af37] border-yellow-200 text-black'
-                            : 'bg-emerald-950 border-emerald-500 text-emerald-200'
+                          : 'bg-emerald-950 border-emerald-500 text-emerald-200'
                       }`}
-                      title={isOccupied ? 'Ocupado' : isBot ? 'Bot' : 'Livre'}
+                      title={isOccupied ? 'Ocupado' : 'Livre'}
                     >
-                      {isBot ? <Bot size={13} /> : seat}
+                      {seat}
                     </span>
                   );
                 })}
@@ -295,20 +290,6 @@ const CreateTableModal: React.FC<{
   const [buyInMax, setBuyInMax] = useState(5000);
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [seatModes, setSeatModes] = useState<Record<number, SeatMode>>({
-    2: 'bot',
-    3: 'open',
-    4: 'open',
-    5: 'bot',
-    6: 'open',
-    7: 'open',
-    8: 'open',
-    9: 'open',
-  });
-
-  const botSeats = seats.filter((seat) => seat !== 1 && seatModes[seat] === 'bot');
-  const openSeats = seats.filter((seat) => seat !== 1 && seatModes[seat] !== 'bot');
-
   const handleCreate = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -320,7 +301,6 @@ const CreateTableModal: React.FC<{
         buyInMin,
         buyInMax,
         maxSeats: 9,
-        botSeats,
         occupiedSeats: [],
         password: password.trim() || undefined,
         createdBy,
@@ -360,7 +340,7 @@ const CreateTableModal: React.FC<{
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-extrabold uppercase tracking-wider text-[#d4af37]">Assentos da sala</p>
-            <p className="text-[11px] text-zinc-400">{openSeats.length} livres para players • {botSeats.length} bots</p>
+            <p className="text-[11px] text-zinc-400">Todos os assentos estão disponíveis para jogadores</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
             {seats.map((seat) => (
@@ -369,26 +349,7 @@ const CreateTableModal: React.FC<{
                   <span className="text-xs font-bold text-zinc-200">Assento #{seat}</span>
                   {seat === 1 && <CheckCircle2 size={14} className="text-emerald-300" />}
                 </div>
-                {seat === 1 ? (
-                  <p className="text-[10px] text-emerald-300 font-bold uppercase">Disponível</p>
-                ) : (
-                  <div className="grid grid-cols-2 rounded-lg border border-zinc-700 overflow-hidden text-[10px] font-extrabold uppercase">
-                    <button
-                      type="button"
-                      onClick={() => setSeatModes((prev) => ({ ...prev, [seat]: 'open' }))}
-                      className={`px-2 py-1 cursor-pointer ${seatModes[seat] === 'open' ? 'bg-emerald-600 text-white' : 'bg-zinc-900 text-zinc-400'}`}
-                    >
-                      Livre
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSeatModes((prev) => ({ ...prev, [seat]: 'bot' }))}
-                      className={`px-2 py-1 cursor-pointer ${seatModes[seat] === 'bot' ? 'bg-[#d4af37] text-black' : 'bg-zinc-900 text-zinc-400'}`}
-                    >
-                      Bot
-                    </button>
-                  </div>
-                )}
+                <p className="text-[10px] text-emerald-300 font-bold uppercase">Disponível para jogador</p>
               </div>
             ))}
           </div>

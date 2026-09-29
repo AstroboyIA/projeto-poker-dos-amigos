@@ -21,9 +21,9 @@ func TestOccupySeatValidatesPlayerSeat(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "seat outside table", seatNumber: 10, wantStatus: http.StatusBadRequest},
-		{name: "bot seat", seatNumber: 3, wantStatus: http.StatusConflict},
 		{name: "occupied seat", seatNumber: 1, wantStatus: http.StatusConflict},
-		{name: "available seat", seatNumber: 8, wantStatus: http.StatusOK},
+		{name: "available seat 3", seatNumber: 3, wantStatus: http.StatusOK},
+		{name: "available seat 8", seatNumber: 8, wantStatus: http.StatusOK},
 	}
 
 	for _, tt := range tests {

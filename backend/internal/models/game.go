@@ -50,7 +50,6 @@ type PokerTable struct {
 	CommunityCards []Card      `json:"community_cards"`
 	CurrentDealer  int         `json:"current_dealer"`
 	CurrentTurn    int         `json:"current_turn"`
-	BotSeats       []int       `json:"bot_seats"`
 	OccupiedSeats  []int       `json:"occupied_seats"`
 	Password       string      `json:"password,omitempty"`
 	CreatedBy      string      `json:"created_by"`

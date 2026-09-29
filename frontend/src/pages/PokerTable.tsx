@@ -16,7 +16,6 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import type { Card, ServerTableState, PrivateCardsPayload } from '../types';
 import {
-  shuffleContinuousDeck,
   evaluate7Cards,
 } from '../utils/pokerEngine';
 import type { HandEvaluation } from '../utils/pokerEngine';
@@ -32,7 +31,6 @@ interface TablePlayer {
   userId?: string;
   name: string;
   isUser: boolean;
-  isBot?: boolean;
   stack: number;
   currentBet: number;
   cards: Card[];
@@ -101,14 +99,6 @@ export const PokerTablePage: React.FC = () => {
   const room = getTableRoomById(tableId);
   const chosenSeat = Number(searchParams.get('seat')) || 3;
   const initialBuyIn = Number(searchParams.get('buyIn')) || 2500;
-  const botSeatsParam = searchParams.get('bots');
-  const configuredBotSeats = new Set(
-    (botSeatsParam ?? room?.botSeats.join(',') ?? '')
-      .split(',')
-      .map((seat) => Number(seat))
-      .filter((seat) => Number.isInteger(seat) && seat >= 1 && seat <= 9 && seat !== chosenSeat)
-  );
-  const occupiedHumanSeats = new Set(room?.occupiedSeats || [1, 2, 4, 6]);
 
   // Configuração da Mesa (9-Max)
   const tableName = `${room?.name || "Mesa VIP Ouro #01 (Texas Hold'em)"} (9-Max)`;
@@ -116,26 +106,7 @@ export const PokerTablePage: React.FC = () => {
   const bigBlindVal = room?.bigBlind || 50;
   const MAX_ACTION_TIME = 20; // Tempo máximo de aposta aumentado para 20 segundos
 
-  // Estado Geral do Jogo
-  const defaultNames: Record<number, string> = {
-    1: room?.createdBy || 'Jonatas (Sócio)',
-    2: 'Felipe (Sócio)',
-    3: 'Alex King',
-    4: "Bruno 'AllIn'",
-    5: 'Diego Bluff',
-    6: 'Carlos Shark',
-    7: 'Lucas Pro',
-    8: 'Rafael Tight',
-    9: 'Marcelo Call',
-  };
-
-  // Se a sala for personalizada e não tiver outros humanos além do criador ou bots, não injeta jogadores fantasmas
-  const isPresetRoom = tableId === 'mesa-vip-01' || tableId === 'mesa-amigos-fechada' || tableId.startsWith('a1111111') || tableId.startsWith('a2222222');
-
-  const resolvedPlayers: TablePlayer[] = [];
-
-  // Adiciona o jogador atual
-  resolvedPlayers.push({
+  const initialPlayers: TablePlayer[] = [{
     id: chosenSeat,
     seatNumber: chosenSeat,
     name: user?.nome_completo || 'Você (VIP)',
@@ -146,62 +117,21 @@ export const PokerTablePage: React.FC = () => {
     hasFolded: false,
     isAllIn: false,
     hasActed: false,
-  });
+  }];
 
-  // Adiciona os bots configurados
-  configuredBotSeats.forEach((seat) => {
-    resolvedPlayers.push({
-      id: seat,
-      seatNumber: seat,
-      name: `Bot #${seat} (${defaultNames[seat]?.split(' ')[0] || 'Player'})`,
-      isUser: false,
-      stack: initialBuyIn,
-      currentBet: 0,
-      cards: [],
-      hasFolded: false,
-      isAllIn: false,
-      hasActed: false,
-    });
-  });
-
-  // Se for uma sala preset demo, adiciona os outros assentos ocupados
-  if (isPresetRoom) {
-    occupiedHumanSeats.forEach((seat) => {
-      if (seat !== chosenSeat && !configuredBotSeats.has(seat) && !resolvedPlayers.some((p) => p.id === seat)) {
-        resolvedPlayers.push({
-          id: seat,
-          seatNumber: seat,
-          name: defaultNames[seat] || `Jogador #${seat}`,
-          isUser: false,
-          stack: [4850, 5200, 3400, 2100, 2800, 6100, 4200, 3900, 2600][seat - 1] || initialBuyIn,
-          currentBet: 0,
-          cards: [],
-          hasFolded: false,
-          isAllIn: false,
-          hasActed: false,
-        });
-      }
-    });
-  }
-
-  resolvedPlayers.sort((a, b) => a.seatNumber - b.seatNumber);
-
-  const [players, setPlayers] = useState<TablePlayer[]>(resolvedPlayers);
+  const [players, setPlayers] = useState<TablePlayer[]>(initialPlayers);
   const [stage, setStage] = useState<GameStage>('WAITING');
 
   const [handNumber, setHandNumber] = useState<number>(1);
   const [pot, setPot] = useState<number>(0);
   const [currentRoundBet, setCurrentRoundBet] = useState<number>(0);
   const [currentTurnIdx, setCurrentTurnIdx] = useState<number>(0);
-  const [dealerIdx, setDealerIdx] = useState<number>(0);
   const [communityCards, setCommunityCards] = useState<Card[]>([]);
-  const [deck, setDeck] = useState<Card[]>([]);
   const [actionTimer, setActionTimer] = useState<number>(MAX_ACTION_TIME);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [showLogs, setShowLogs] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [winnerMessage, setWinnerMessage] = useState<string | null>(null);
-  const [countdownNextHand, setCountdownNextHand] = useState<number>(5);
   const [showExitModal, setShowExitModal] = useState<boolean>(false);
   const [rebuyAmount, setRebuyAmount] = useState<number>(room?.buyInMin || 1000);
   const [isRebuying, setIsRebuying] = useState(false);
@@ -221,118 +151,6 @@ export const PokerTablePage: React.FC = () => {
     if (soundEnabled) soundFX.playCardSlide();
   };
 
-  const isProcessingAITurn = useRef(false);
-
-  // Função para adicionar bot dinamicamente em mesa aguardando
-  const handleAddBotToTable = () => {
-    const currentSeats = new Set(players.map((p) => p.seatNumber));
-    let freeSeat = 1;
-    while (freeSeat <= 9 && currentSeats.has(freeSeat)) {
-      freeSeat++;
-    }
-    if (freeSeat > 9) return;
-
-    if (isMultiplayerMode) {
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        addLog('Aguarde a conexão com o servidor para adicionar um bot.');
-        return;
-      }
-      wsRef.current.send(JSON.stringify({
-        type: 'ADD_BOT',
-        payload: { seat_number: freeSeat, stack: initialBuyIn },
-      }));
-      return;
-    }
-
-    const newBot: TablePlayer = {
-      id: freeSeat,
-      seatNumber: freeSeat,
-      name: `Bot #${freeSeat} (${defaultNames[freeSeat]?.split(' ')[0] || 'Player'})`,
-      isUser: false,
-      stack: initialBuyIn,
-      currentBet: 0,
-      cards: [],
-      hasFolded: false,
-      isAllIn: false,
-      hasActed: false,
-    };
-
-    setPlayers((prev) => [...prev, newBot].sort((a, b) => a.seatNumber - b.seatNumber));
-    addLog(`🤖 Bot #${freeSeat} entrou na mesa.`);
-  };
-
-  // 1. INICIAR UMA NOVA MÃO
-  const startNewHand = () => {
-    setWinnerMessage(null);
-    setCommunityCards([]);
-    setPot(0);
-    setCurrentRoundBet(bigBlindVal);
-
-    // Embaralhamento com Memória Física Contínua
-    const shuffled = shuffleContinuousDeck(deck.length === 52 ? deck : null);
-    let cardIdx = 0;
-
-    // Novo Dealer
-    const nextDealerIdx = (dealerIdx + 1) % players.length;
-    setDealerIdx(nextDealerIdx);
-
-    const sbIdx = (nextDealerIdx + 1) % players.length;
-    const bbIdx = (nextDealerIdx + 2) % players.length;
-    const firstToActIdx = (nextDealerIdx + 3) % players.length;
-
-    // Distribuir 2 cartas para cada jogador sentado.
-    const updatedPlayers = players.map((p, idx) => {
-      let bet = 0;
-      let newStack = p.stack;
-
-      if (idx === sbIdx) {
-        const sbAmt = Math.min(smallBlindVal, newStack);
-        newStack -= sbAmt;
-        bet = sbAmt;
-      } else if (idx === bbIdx) {
-        const bbAmt = Math.min(bigBlindVal, newStack);
-        newStack -= bbAmt;
-        bet = bbAmt;
-      }
-
-      const pCards = [shuffled[cardIdx++], shuffled[cardIdx++]];
-
-      return {
-        ...p,
-        stack: newStack,
-        currentBet: bet,
-        cards: pCards,
-        hasFolded: false,
-        isAllIn: newStack === 0,
-        hasActed: false,
-        lastAction: idx === sbIdx ? `Small Blind ($${smallBlindVal})` : idx === bbIdx ? `Big Blind ($${bigBlindVal})` : undefined,
-        isDealer: idx === nextDealerIdx,
-        isSmallBlind: idx === sbIdx,
-        isBigBlind: idx === bbIdx,
-        handEval: undefined,
-      };
-    });
-
-    const initialPot = smallBlindVal + bigBlindVal;
-    setPot(initialPot);
-    setDeck(shuffled.slice(cardIdx));
-    setPlayers(updatedPlayers);
-    setCurrentTurnIdx(firstToActIdx);
-    setStage('PRE_FLOP');
-    setActionTimer(MAX_ACTION_TIME);
-    setRaiseAmount(bigBlindVal * 2);
-
-    triggerCardSound();
-    triggerChipSound();
-
-    addLog(`--- Mão #${handNumber} iniciada (${updatedPlayers.length} jogadores) ---`);
-    addLog(`${updatedPlayers[nextDealerIdx].name} está no Botão (Dealer).`);
-    addLog(`${updatedPlayers[sbIdx].name} postou Small Blind ($${smallBlindVal}).`);
-    addLog(`${updatedPlayers[bbIdx].name} postou Big Blind ($${bigBlindVal}).`);
-    addLog(`Vez de agir: ${updatedPlayers[firstToActIdx].name}`);
-  };
-
-  const [isMultiplayerMode, setIsMultiplayerMode] = useState<boolean>(true);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [ownCards, setOwnCards] = useState<Card[]>([]);
   const [isWaitingForAction, setIsWaitingForAction] = useState<boolean>(false);
@@ -365,7 +183,6 @@ export const PokerTablePage: React.FC = () => {
             table_id: tableId,
             seat_number: chosenSeat,
             buy_in: initialBuyIn,
-            bot_seats: Array.from(configuredBotSeats),
           },
         };
         socket?.send(JSON.stringify(joinMsg));
@@ -408,7 +225,6 @@ export const PokerTablePage: React.FC = () => {
       };
     } catch (err) {
       console.warn('Falha ao instanciar WebSocket:', err);
-      setIsMultiplayerMode(false);
     }
 
     return () => {
@@ -430,7 +246,6 @@ export const PokerTablePage: React.FC = () => {
     setPot(serverState.pot);
     setCurrentRoundBet(serverState.current_round_bet);
     setCurrentTurnIdx(serverState.current_turn_idx);
-    setDealerIdx(serverState.dealer_idx);
     setCommunityCards(serverState.community_cards || []);
     if (serverState.winner_message) {
       setWinnerMessage(serverState.winner_message);
@@ -448,7 +263,6 @@ export const PokerTablePage: React.FC = () => {
         userId: sp.user_id,
         name: isCurrentUser ? `${user?.nome_completo || 'Você'} (VIP)` : sp.name,
         isUser: isCurrentUser,
-        isBot: sp.is_bot,
         stack: Number.isFinite(sp.stack) ? sp.stack : 0,
         currentBet: Number.isFinite(sp.current_bet) ? sp.current_bet : 0,
         cards: Array.isArray(sp.cards) ? sp.cards : [],
@@ -489,15 +303,11 @@ export const PokerTablePage: React.FC = () => {
 
   const handleStartTable = () => {
     if (players.length < 2) return;
-    if (isMultiplayerMode) {
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        addLog('Aguarde a conexão com o servidor para iniciar a mesa.');
-        return;
-      }
-      wsRef.current.send(JSON.stringify({ type: 'START_TABLE' }));
+    if (wsRef.current?.readyState !== WebSocket.OPEN) {
+      addLog('Aguarde a conexão com o servidor para iniciar a mesa.');
       return;
     }
-    startNewHand();
+    wsRef.current.send(JSON.stringify({ type: 'START_TABLE' }));
   };
 
   // 2. TEMPORIZADOR DE AÇÃO (Action Timer Clock de 20s)
@@ -507,354 +317,29 @@ export const PokerTablePage: React.FC = () => {
     const interval = setInterval(() => {
       setActionTimer((prev) => {
         if (prev <= 1) {
-          handleAutoTimeoutAction();
-          return MAX_ACTION_TIME;
+          return 0;
         }
         return prev - 1;
       });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentTurnIdx, stage, players, isMultiplayerMode]);
+  }, [currentTurnIdx, stage]);
 
-  const handleAutoTimeoutAction = () => {
-    const activePlayer = players[currentTurnIdx];
-    if (!activePlayer || !activePlayer.isUser || activePlayer.hasFolded || activePlayer.isAllIn) return;
-    handlePlayerAction('FOLD');
-  };
-
-  // 3. FLUXO DE INTELIGÊNCIA / RESPOSTA DE BOTS
-  // Em modo multiplayer, o frontend NUNCA simula ações para outros jogadores humanos
-  useEffect(() => {
-    if (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'DEALING') return;
-    if (isMultiplayerMode) return; // No multiplayer o backend é autoritativo
-
-    const activePlayer = players[currentTurnIdx];
-    if (!activePlayer) return;
-
-    if (activePlayer.hasFolded || activePlayer.isAllIn) {
-      advanceTurn(players, currentTurnIdx);
-      return;
-    }
-
-    if (activePlayer.isUser) {
-      isProcessingAITurn.current = false;
-      return;
-    }
-
-    if (!isProcessingAITurn.current) {
-      isProcessingAITurn.current = true;
-      const thinkTime = 1200 + Math.random() * 1100;
-
-      const timer = setTimeout(() => {
-        const toCall = currentRoundBet - activePlayer.currentBet;
-
-        if (toCall === 0) {
-          if (Math.random() < 0.82) {
-            handlePlayerAction('CHECK');
-          } else {
-            const betAmt = Math.min(activePlayer.stack, bigBlindVal * 2);
-            handlePlayerAction('RAISE', betAmt);
-          }
-        } else {
-          const rand = Math.random();
-          if (rand < 0.28 && toCall > bigBlindVal * 3) {
-            handlePlayerAction('FOLD');
-          } else if (rand < 0.88) {
-            handlePlayerAction('CALL');
-          } else {
-            const raiseVal = Math.min(activePlayer.stack, currentRoundBet * 2);
-            handlePlayerAction('RAISE', raiseVal);
-          }
-        }
-        isProcessingAITurn.current = false;
-      }, thinkTime);
-
-      return () => clearTimeout(timer);
-    }
-  }, [currentTurnIdx, stage, currentRoundBet, isMultiplayerMode]);
-
-  // 4. EXECUÇÃO DE AÇÕES DE UM JOGADOR
+  // 3. Envia ações ao servidor autoritativo.
   const handlePlayerAction = (action: 'FOLD' | 'CHECK' | 'CALL' | 'RAISE' | 'ALL_IN', customAmount?: number) => {
-    if (isMultiplayerMode && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      setIsWaitingForAction(true);
-      const actionMsg = {
-        type: 'PLAYER_ACTION',
-        payload: {
-          action,
-          amount: action === 'RAISE' ? (customAmount || raiseAmount) : undefined,
-        },
-      };
-      wsRef.current.send(JSON.stringify(actionMsg));
+    if (wsRef.current?.readyState !== WebSocket.OPEN) {
+      addLog('Conexão com o servidor indisponível; ação não enviada.');
       return;
     }
-
-    const updated = [...players];
-    const player = updated[currentTurnIdx];
-    if (!player || player.hasFolded || player.isAllIn) return;
-
-    player.hasActed = true;
-    let newPot = pot;
-    let newRoundBet = currentRoundBet;
-
-    switch (action) {
-      case 'FOLD':
-        player.hasFolded = true;
-        player.lastAction = 'Desistiu (Fold)';
-        triggerCardSound();
-        addLog(`${player.name} deu Fold.`);
-        break;
-
-      case 'CHECK':
-        player.lastAction = 'Passou a vez (Check)';
-        addLog(`${player.name} deu Check.`);
-        break;
-
-      case 'CALL': {
-        const needed = currentRoundBet - player.currentBet;
-        const callAmt = Math.min(needed, player.stack);
-        player.stack -= callAmt;
-        player.currentBet += callAmt;
-        newPot += callAmt;
-        if (player.stack === 0) player.isAllIn = true;
-        player.lastAction = `Pagou $${callAmt} (Call)`;
-        triggerChipSound();
-        addLog(`${player.name} deu Call de $${callAmt}.`);
-        break;
-      }
-
-      case 'RAISE': {
-        const targetBet = customAmount || raiseAmount;
-        const additional = targetBet - player.currentBet;
-        const actualAmt = Math.min(additional, player.stack);
-        player.stack -= actualAmt;
-        player.currentBet += actualAmt;
-        newPot += actualAmt;
-        newRoundBet = player.currentBet;
-
-        updated.forEach((p, i) => {
-          if (i !== currentTurnIdx && !p.hasFolded && !p.isAllIn) {
-            p.hasActed = false;
-          }
-        });
-
-        if (player.stack === 0) player.isAllIn = true;
-        player.lastAction = `Aumentou para $${player.currentBet} (Raise)`;
-        triggerChipSound();
-        addLog(`${player.name} aumentou a aposta para $${player.currentBet}!`);
-        break;
-      }
-
-      case 'ALL_IN': {
-        const allInAmt = player.stack;
-        player.currentBet += allInAmt;
-        player.stack = 0;
-        player.isAllIn = true;
-        newPot += allInAmt;
-        if (player.currentBet > newRoundBet) {
-          newRoundBet = player.currentBet;
-          updated.forEach((p, i) => {
-            if (i !== currentTurnIdx && !p.hasFolded && !p.isAllIn) {
-              p.hasActed = false;
-            }
-          });
-        }
-        player.lastAction = `ALL-IN ($${allInAmt}) 🔥`;
-        triggerChipSound();
-        addLog(`${player.name} foi ALL-IN com $${allInAmt}! 🔥`);
-        break;
-      }
-    }
-
-    setPot(newPot);
-    setCurrentRoundBet(newRoundBet);
-    setPlayers(updated);
-    setActionTimer(MAX_ACTION_TIME);
-
-    const activeNonFolded = updated.filter((p) => !p.hasFolded);
-    if (activeNonFolded.length === 1) {
-      handleSingleSurvivorWin(updated, activeNonFolded[0], newPot);
-      return;
-    }
-
-    checkBettingRoundComplete(updated, newRoundBet, currentTurnIdx);
-  };
-
-  // 5. VERIFICAÇÃO DE CONCLUSÃO DA RODADA DE APOSTAS
-  const checkBettingRoundComplete = (currentPlayers: TablePlayer[], roundBet: number, currentIdx: number) => {
-    const activePlayers = currentPlayers.filter((p) => !p.hasFolded && !p.isAllIn);
-
-    const isRoundDone =
-      activePlayers.length === 0 ||
-      activePlayers.every((p) => p.hasActed && p.currentBet === roundBet);
-
-    if (isRoundDone) {
-      advanceStreet(currentPlayers);
-    } else {
-      advanceTurn(currentPlayers, currentIdx);
-    }
-  };
-
-  const advanceTurn = (currentPlayers: TablePlayer[], fromIdx: number) => {
-    let nextIdx = (fromIdx + 1) % currentPlayers.length;
-    let attempts = 0;
-
-    while (attempts < currentPlayers.length) {
-      const candidate = currentPlayers[nextIdx];
-      if (!candidate.hasFolded && !candidate.isAllIn) {
-        setCurrentTurnIdx(nextIdx);
-        setActionTimer(MAX_ACTION_TIME);
-        addLog(`Vez de agir: ${candidate.name}`);
-        return;
-      }
-      nextIdx = (nextIdx + 1) % currentPlayers.length;
-      attempts++;
-    }
-
-    advanceStreet(currentPlayers);
-  };
-
-  // 6. TRANSIÇÃO AUTOMÁTICA DE RUAS
-  const advanceStreet = (currentPlayers: TablePlayer[]) => {
-    const resetPlayers = currentPlayers.map((p) => ({
-      ...p,
-      currentBet: 0,
-      hasActed: false,
+    setIsWaitingForAction(true);
+    wsRef.current.send(JSON.stringify({
+      type: 'PLAYER_ACTION',
+      payload: {
+        action,
+        amount: action === 'RAISE' ? (customAmount || raiseAmount) : undefined,
+      },
     }));
-    setCurrentRoundBet(0);
-
-    let nextDeck = [...deck];
-    let newCards = [...communityCards];
-
-    triggerChipSound();
-    triggerCardSound();
-
-    if (stage === 'PRE_FLOP') {
-      newCards = [nextDeck.shift()!, nextDeck.shift()!, nextDeck.shift()!];
-      setCommunityCards(newCards);
-      setDeck(nextDeck);
-      setStage('FLOP');
-      addLog(`🎰 FLOP revelado: ${newCards.map((c) => c.code).join(' ')}`);
-      setFirstTurnOfStreet(resetPlayers, dealerIdx);
-    } else if (stage === 'FLOP') {
-      const turnCard = nextDeck.shift()!;
-      newCards = [...newCards, turnCard];
-      setCommunityCards(newCards);
-      setDeck(nextDeck);
-      setStage('TURN');
-      addLog(`🎲 TURN revelado: ${turnCard.code}`);
-      setFirstTurnOfStreet(resetPlayers, dealerIdx);
-    } else if (stage === 'TURN') {
-      const riverCard = nextDeck.shift()!;
-      newCards = [...newCards, riverCard];
-      setCommunityCards(newCards);
-      setDeck(nextDeck);
-      setStage('RIVER');
-      addLog(`🌊 RIVER revelado: ${riverCard.code}`);
-      setFirstTurnOfStreet(resetPlayers, dealerIdx);
-    } else if (stage === 'RIVER') {
-      executeShowdown(resetPlayers, newCards);
-    }
-  };
-
-  const setFirstTurnOfStreet = (currentPlayers: TablePlayer[], dIdx: number) => {
-    let nextIdx = (dIdx + 1) % currentPlayers.length;
-    for (let i = 0; i < currentPlayers.length; i++) {
-      const idx = (nextIdx + i) % currentPlayers.length;
-      if (!currentPlayers[idx].hasFolded && !currentPlayers[idx].isAllIn) {
-        setCurrentTurnIdx(idx);
-        setActionTimer(MAX_ACTION_TIME);
-        setPlayers(currentPlayers);
-        return;
-      }
-    }
-    setPlayers(currentPlayers);
-  };
-
-  // 7. SHOWDOWN E CÁLCULO DE VENCEDORES
-  const executeShowdown = (currentPlayers: TablePlayer[], tableCards: Card[]) => {
-    setStage('SHOWDOWN');
-    addLog(`🏆 --- SHOWDOWN ---`);
-
-    const evaluatedPlayers = currentPlayers.map((p) => {
-      if (p.hasFolded) return p;
-      const combined = [...p.cards, ...tableCards];
-      const evaluation = evaluate7Cards(combined);
-      return {
-        ...p,
-        handEval: evaluation,
-      };
-    });
-
-    let bestScore = -1;
-    let winners: TablePlayer[] = [];
-
-    evaluatedPlayers.forEach((p) => {
-      if (!p.hasFolded && p.handEval) {
-        addLog(`${p.name} mostrou ${p.cards.map((c) => c.code).join(' ')}: ${p.handEval.description}`);
-        if (p.handEval.score > bestScore) {
-          bestScore = p.handEval.score;
-          winners = [p];
-        } else if (p.handEval.score === bestScore) {
-          winners.push(p);
-        }
-      }
-    });
-
-    const prizePerWinner = Math.floor(pot / winners.length);
-    const finalPlayers = evaluatedPlayers.map((p) => {
-      if (winners.some((w) => w.id === p.id)) {
-        return { ...p, stack: p.stack + prizePerWinner };
-      }
-      return p;
-    });
-
-    const winnerNames = winners.map((w) => w.name).join(', ');
-    const bestHandDesc = winners[0]?.handEval?.description || 'Melhor Mão';
-    const msg = `🎉 ${winnerNames} venceu o pote de $${pot} com ${bestHandDesc}!`;
-    setWinnerMessage(msg);
-    addLog(msg);
-    setPlayers(finalPlayers);
-
-    if (soundEnabled) soundFX.playWinFanfare();
-    scheduleNextHand();
-  };
-
-  const handleSingleSurvivorWin = (currentPlayers: TablePlayer[], winner: TablePlayer, totalPot: number) => {
-    setStage('SHOWDOWN');
-    const finalPlayers = currentPlayers.map((p) => {
-      if (p.id === winner.id) {
-        return { ...p, stack: p.stack + totalPot };
-      }
-      return p;
-    });
-
-    const msg = `🏆 ${winner.name} venceu o pote de $${totalPot} (Todos deram Fold)!`;
-    setWinnerMessage(msg);
-    addLog(msg);
-    setPlayers(finalPlayers);
-
-    if (soundEnabled) soundFX.playWinFanfare();
-    scheduleNextHand();
-  };
-
-  // 8. CONTAGEM REGRESSIVA PARA PRÓXIMA MÃO
-  const scheduleNextHand = () => {
-    setStage('HAND_OVER');
-    let timeLeft = 5;
-    setCountdownNextHand(timeLeft);
-
-    const timer = setInterval(() => {
-      timeLeft -= 1;
-      setCountdownNextHand(timeLeft);
-      if (timeLeft <= 0) {
-        clearInterval(timer);
-        if (!isMultiplayerMode) {
-          setHandNumber((h) => h + 1);
-          startNewHand();
-        }
-      }
-    }, 1000);
   };
 
   const [isExiting, setIsExiting] = useState(false);
@@ -923,9 +408,7 @@ export const PokerTablePage: React.FC = () => {
   const toCallAmount = userPlayer ? Math.max(0, currentRoundBet - userPlayer.currentBet) : 0;
   const canCheck = toCallAmount === 0;
 
-  const effectiveUserCards = (isMultiplayerMode && ownCards.length === 2)
-    ? ownCards
-    : (userPlayer?.cards || []);
+  const effectiveUserCards = ownCards.length === 2 ? ownCards : (userPlayer?.cards || []);
 
   const userHandEval = effectiveUserCards.length === 2 && communityCards.length >= 3
     ? evaluate7Cards([...effectiveUserCards, ...communityCards])
@@ -981,7 +464,7 @@ export const PokerTablePage: React.FC = () => {
             {stage === 'TURN' && 'TURN (4ª Carta)'}
             {stage === 'RIVER' && 'RIVER (5ª Carta)'}
             {stage === 'SHOWDOWN' && 'SHOWDOWN 🏆'}
-            {stage === 'HAND_OVER' && `PRÓXIMA MÃO EM ${countdownNextHand}s`}
+            {stage === 'HAND_OVER' && 'AGUARDANDO PRÓXIMA MÃO'}
           </div>
 
           <button
@@ -1156,7 +639,7 @@ export const PokerTablePage: React.FC = () => {
                 {winnerMessage}
               </p>
               <p className="text-[10px] text-zinc-400 mt-0.5">
-                Próxima mão iniciando em {countdownNextHand}s...
+                A próxima mão será iniciada pelo servidor.
               </p>
             </div>
           )}
@@ -1169,9 +652,9 @@ export const PokerTablePage: React.FC = () => {
                   Mesa Criada / Aguardando
                 </p>
                 <p className="text-xs text-zinc-300 mt-1">
-                  {players.length === 1
-                    ? 'Há apenas 1 jogador na mesa. São necessários ao menos 2 jogadores para iniciar.'
-                    : `${players.length} jogadores prontos para jogar.`}
+                  {players.length < 2
+                    ? 'Aguardando a entrada de pelo menos mais um jogador para iniciar.'
+                    : `${players.length} jogadores prontos. Inicie a mesa quando todos estiverem preparados.`}
                 </p>
               </div>
 
@@ -1180,22 +663,13 @@ export const PokerTablePage: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleStartTable}
-                    disabled={isMultiplayerMode && !wsConnected}
+                    disabled={!wsConnected}
                     className="w-full py-2.5 rounded-xl gold-btn text-black font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-lg hover:scale-105 transition"
                   >
                     ▶️ INICIAR MESA
                   </button>
                 )}
 
-                {players.length < 9 && (
-                  <button
-                    type="button"
-                    onClick={handleAddBotToTable}
-                    className="w-full py-2 rounded-xl bg-zinc-900 border border-[#d4af37]/60 hover:bg-zinc-800 text-[#f5d77f] font-bold text-xs uppercase tracking-wider cursor-pointer transition"
-                  >
-                    🤖 ADICIONAR BOT DE TREINO
-                  </button>
-                )}
               </div>
             </div>
           )}

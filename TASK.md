@@ -4,12 +4,12 @@
 
 Implementar, de forma incremental e segura, dois requisitos principais no poker online:
 
-1. Somente o criador de uma mesa pode configurar assentos como disponíveis para jogadores ou ocupados por bots.
+1. Somente jogadores autenticados podem ocupar assentos livres de uma mesa.
 2. Implementar uma carteira/saldo persistente para cada usuário, integrada ao buy-in e à liquidação da mesa.
 
 A implementação deve preparar a arquitetura para uma futura operação com dinheiro real, **sem implementar dinheiro real nesta task**.
 
-> **Princípio central:** PostgreSQL é a fonte de verdade dos dados persistentes e financeiros; o backend é a autoridade das regras; REST/WebSocket são apenas canais de solicitação; o frontend nunca é autoridade para saldo, stack, buy-in, cash-out, identidade do criador ou configuração de bots.
+> **Princípio central:** PostgreSQL é a fonte de verdade dos dados persistentes e financeiros; o backend é a autoridade das regras; REST/WebSocket são apenas canais de solicitação; o frontend nunca é autoridade para saldo, stack, buy-in, cash-out ou identidade do criador.
 
 ---
 
@@ -21,7 +21,7 @@ Antes de implementar:
 
 - analisar a arquitetura atual;
 - identificar frontend, backend, PostgreSQL, migrations, autenticação, REST, WebSocket e engine do poker;
-- identificar os modelos atuais de `User`, `PokerTable`, `Player/Seat`, bots, stack e buy-in;
+- identificar os modelos atuais de `User`, `PokerTable`, `Player/Seat`, stack e buy-in;
 - identificar como usuários e mesas são atualmente persistidos;
 - identificar o fluxo atual de entrada e saída da mesa;
 - identificar como o WebSocket autentica e identifica o usuário;
@@ -197,7 +197,7 @@ O frontend nunca é fonte definitiva de:
 - depósito;
 - saque;
 - criador da mesa;
-- configuração de bots.
+- configuração e ocupação de assentos.
 
 ---
 
@@ -229,47 +229,9 @@ authenticated_user.id == table.creator_user_id
 
 ---
 
-# 6. Permissões de assentos e bots
+# 6. Ocupação de assentos
 
-## 6.1 Criador
-
-O criador pode:
-
-- definir assentos disponíveis para jogadores;
-- definir assentos ocupados por bots;
-- alterar essa configuração enquanto as regras da mesa permitirem;
-- adicionar/remover/trocar bots, conforme a funcionalidade existente;
-- visualizar claramente a configuração atual.
-
-## 6.2 Outros jogadores
-
-Jogadores comuns:
-
-- não visualizam controles de configuração de bot/disponibilidade;
-- não podem alterar a configuração;
-- apenas visualizam o estado atual;
-- podem escolher um assento efetivamente disponível para jogador.
-
-## 6.3 Segurança
-
-A restrição deve existir no backend.
-
-Não confiar em:
-
-```typescript
-isCreator
-```
-
-enviado pelo cliente.
-
-Toda operação exclusiva do criador deve validar o usuário autenticado contra `creator_user_id`.
-
-Isso vale para REST e WebSocket:
-
-- criar/configurar bots;
-- alterar disponibilidade de assento;
-- remover/trocar bot;
-- qualquer operação exclusiva do proprietário da mesa.
+Todos os assentos livres podem ser escolhidos por jogadores autenticados. O backend valida a disponibilidade e impede que duas pessoas ocupem o mesmo assento.
 
 ---
 
@@ -282,7 +244,6 @@ Não utilizar usuário anônimo para operações que dependam da identidade do u
 - entrar em mesa;
 - escolher assento;
 - buy-in;
-- configurar bot;
 - alterar assento;
 - sair da mesa;
 - liquidar stack;
@@ -965,10 +926,8 @@ Implementar:
 
 - autenticação obrigatória nas operações WS relevantes;
 - identificação real do usuário;
-- autorização pelo `creator_user_id`;
 - proteção REST;
 - proteção WebSocket;
-- configuração de bots/assentos somente pelo criador.
 
 Testar com duas contas.
 
@@ -1025,8 +984,6 @@ Implementar:
 - histórico;
 - adicionar saldo;
 - buy-in integrado ao saldo;
-- controles de criador;
-- remoção dos controles de bot para jogadores comuns;
 - mensagens de erro/saldo insuficiente;
 - atualização após buy-in e liquidação.
 
@@ -1078,23 +1035,10 @@ Mesa 2
 
 # 27. Cenários obrigatórios de teste
 
-## 27.1 Permissões
+## 27.1 Assentos
 
-### Conta A — criador
-
-- cria mesa;
-- configura assentos;
-- define bots;
-- altera configuração quando permitido.
-
-### Conta B — jogador
-
-- entra na mesma mesa;
-- vê estado dos assentos;
-- não vê controles de configuração;
-- escolhe somente assento disponível;
-- não consegue alterar bots por REST;
-- não consegue alterar bots por WebSocket.
+- dois jogadores não podem ocupar o mesmo assento;
+- jogadores podem escolher somente assentos livres.
 
 ---
 
@@ -1187,35 +1131,31 @@ conforme a política de liquidação definida pelo engine.
 
 A implementação somente será considerada concluída quando:
 
-1. somente o criador puder configurar assentos/bots;
-2. o backend bloquear alterações não autorizadas;
-3. WebSocket também aplicar autorização;
-4. o criador for identificado por `creator_user_id`;
-5. WebSocket não depender de usuário anônimo para operações autenticadas;
-6. cada usuário possuir carteira persistente;
-7. valores monetários utilizarem representação exata;
-8. dinheiro e fichas forem conceitos separados;
-9. conversão Money ↔ Chips estiver centralizada;
-10. buy-in validar saldo no backend;
-11. buy-in for atômico;
-12. buy-in possuir idempotência;
-13. stack da mesa não for controlado pelo frontend;
-14. saída usar o stack real do servidor;
-15. liquidação não aceitar `cashOut` calculado pelo cliente;
-16. saída não puder creditar duas vezes;
-17. saldo disponível e reservado obedecerem à regra definida;
-18. ledger registrar movimentações relevantes;
-19. ledger permitir reconstrução financeira;
-20. carteira sobreviver a logout/login/refresh;
-21. existir interface de carteira;
-22. existir histórico;
-23. existir estrutura de depósito preparada para provider futuro;
-24. mock, se existir, estiver explicitamente isolado como DEV;
-25. gateway real não for integrado;
-26. testes automatizados passarem;
-27. lint e build passarem;
-28. testes manuais com múltiplas contas e mesas passarem;
-29. alterações existentes no worktree forem preservadas.
+1. WebSocket não depender de usuário anônimo para operações autenticadas;
+2. cada usuário possuir carteira persistente;
+3. valores monetários utilizarem representação exata;
+4. dinheiro e fichas forem conceitos separados;
+5. conversão Money ↔ Chips estiver centralizada;
+6. buy-in validar saldo no backend;
+7. buy-in for atômico;
+8. buy-in possuir idempotência;
+9. stack da mesa não for controlado pelo frontend;
+10. saída usar o stack real do servidor;
+11. liquidação não aceitar `cashOut` calculado pelo cliente;
+12. saída não puder creditar duas vezes;
+13. saldo disponível e reservado obedecerem à regra definida;
+14. ledger registrar movimentações relevantes;
+15. ledger permitir reconstrução financeira;
+16. carteira sobreviver a logout/login/refresh;
+17. existir interface de carteira;
+18. existir histórico;
+19. existir estrutura de depósito preparada para provider futuro;
+20. mock, se existir, estiver explicitamente isolado como DEV;
+21. gateway real não for integrado;
+22. testes automatizados passarem;
+23. lint e build passarem;
+24. testes manuais com múltiplas contas e mesas passarem;
+25. alterações existentes no worktree forem preservadas.
 
 ---
 
@@ -1226,7 +1166,6 @@ Antes de finalizar:
 - revisar todos os fluxos existentes de autenticação;
 - revisar criação/entrada/saída de mesas;
 - revisar WebSocket;
-- revisar bots;
 - revisar engine;
 - revisar lobby;
 - revisar API;

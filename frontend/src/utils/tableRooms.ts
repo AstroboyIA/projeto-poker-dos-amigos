@@ -1,8 +1,6 @@
 import type { PokerTable } from '../types';
 import { api } from '../services/api';
 
-export type SeatMode = 'bot' | 'open';
-
 export interface TableRoom {
   id: string;
   name: string;
@@ -11,7 +9,6 @@ export interface TableRoom {
   buyInMin: number;
   buyInMax: number;
   maxSeats: number;
-  botSeats: number[];
   occupiedSeats: number[];
   password?: string;
   createdBy: string;
@@ -30,7 +27,6 @@ export const pokerTableToRoom = (table: PokerTable): TableRoom => {
     buyInMin: table.buy_in_min,
     buyInMax: table.buy_in_max,
     maxSeats: table.max_seats,
-    botSeats: table.bot_seats || [],
     occupiedSeats: table.occupied_seats || [],
     password: table.password,
     createdBy: table.created_by || 'Clube',
@@ -74,7 +70,6 @@ export const createRemoteTable = async (
       buy_in_min: table.buyInMin,
       buy_in_max: table.buyInMax,
       max_seats: table.maxSeats,
-      bot_seats: table.botSeats,
       occupied_seats: table.occupiedSeats,
       password: table.password,
     });
@@ -99,8 +94,7 @@ export const getTableRoomById = (id: string): TableRoom | undefined => {
 };
 
 export const countAvailableSeats = (table: TableRoom) => {
-  const unavailable = new Set([...table.occupiedSeats, ...table.botSeats]);
-  return table.maxSeats - unavailable.size;
+  return table.maxSeats - new Set(table.occupiedSeats).size;
 };
 
 export const occupyTableSeatRemote = async (token: string | null, tableId: string, seatNumber: number) => {

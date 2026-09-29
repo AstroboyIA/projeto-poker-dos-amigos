@@ -44,7 +44,6 @@ type PlayerState struct {
 	SeatNumber   int             `json:"seat_number"`
 	UserID       *uuid.UUID      `json:"user_id,omitempty"`
 	Name         string          `json:"name"`
-	IsBot        bool            `json:"is_bot"`
 	Stack        int64           `json:"stack"`
 	CurrentBet   int64           `json:"current_bet"`
 	Cards        []models.Card   `json:"-"` // Mantido privado!
@@ -63,7 +62,6 @@ type PublicPlayerInfo struct {
 	SeatNumber   int             `json:"seat_number"`
 	UserID       *uuid.UUID      `json:"user_id,omitempty"`
 	Name         string          `json:"name"`
-	IsBot        bool            `json:"is_bot"`
 	Stack        int64           `json:"stack"`
 	CurrentBet   int64           `json:"current_bet"`
 	CardCount    int             `json:"card_count"`
@@ -173,15 +171,6 @@ func (tg *TableGame) JoinPlayer(userID uuid.UUID, name string, seatNumber int, b
 	// Verifica se assento já está ocupado
 	for _, p := range tg.Players {
 		if p.SeatNumber == seatNumber {
-			// Se o assento era de um bot, podemos substituir pelo humano
-			if p.IsBot {
-				uid := userID
-				p.UserID = &uid
-				p.Name = name
-				p.IsBot = false
-				p.Stack = buyIn
-				return nil
-			}
 			return fmt.Errorf("assento %d já ocupado", seatNumber)
 		}
 	}
@@ -192,45 +181,12 @@ func (tg *TableGame) JoinPlayer(userID uuid.UUID, name string, seatNumber int, b
 		SeatNumber: seatNumber,
 		UserID:     &uid,
 		Name:       name,
-		IsBot:      false,
 		Stack:      buyIn,
 		CurrentBet: 0,
 		Cards:      make([]models.Card, 0),
 	}
 
 	tg.Players = append(tg.Players, newPlayer)
-	sort.Slice(tg.Players, func(i, j int) bool {
-		return tg.Players[i].SeatNumber < tg.Players[j].SeatNumber
-	})
-
-	return nil
-}
-
-// Adiciona Bot
-func (tg *TableGame) AddBot(seatNumber int, name string, stack int64) error {
-	tg.mu.Lock()
-	defer tg.mu.Unlock()
-
-	if tg.Stage != StageWaiting {
-		return fmt.Errorf("bots só podem entrar antes do início da partida")
-	}
-	for _, p := range tg.Players {
-		if p.SeatNumber == seatNumber {
-			return fmt.Errorf("assento %d já ocupado", seatNumber)
-		}
-	}
-
-	botPlayer := &PlayerState{
-		ID:         seatNumber,
-		SeatNumber: seatNumber,
-		Name:       name,
-		IsBot:      true,
-		Stack:      stack,
-		CurrentBet: 0,
-		Cards:      make([]models.Card, 0),
-	}
-
-	tg.Players = append(tg.Players, botPlayer)
 	sort.Slice(tg.Players, func(i, j int) bool {
 		return tg.Players[i].SeatNumber < tg.Players[j].SeatNumber
 	})
@@ -254,42 +210,6 @@ func (tg *TableGame) Start() error {
 		}
 	}
 	tg.startNewHandLocked()
-	return nil
-}
-
-func (tg *TableGame) ProcessBotAction() error {
-	tg.mu.Lock()
-	defer tg.mu.Unlock()
-
-	if tg.Stage == StageWaiting || tg.Stage == StageShowdown || tg.Stage == StageHandOver {
-		return fmt.Errorf("mesa não está em rodada de apostas")
-	}
-	if tg.CurrentTurnIdx < 0 || tg.CurrentTurnIdx >= len(tg.Players) {
-		return fmt.Errorf("índice de turno inválido")
-	}
-	player := tg.Players[tg.CurrentTurnIdx]
-	if !player.IsBot || player.HasFolded || player.IsAllIn {
-		return fmt.Errorf("não é a vez de um bot")
-	}
-
-	player.HasActed = true
-	if player.CurrentBet < tg.CurrentBet {
-		needed := tg.CurrentBet - player.CurrentBet
-		if needed > player.Stack {
-			needed = player.Stack
-		}
-		player.Stack -= needed
-		player.CurrentBet += needed
-		tg.Pot += needed
-		if player.Stack == 0 {
-			player.IsAllIn = true
-		}
-		player.LastAction = fmt.Sprintf("Pagou $%d (Call)", needed)
-	} else {
-		player.LastAction = "Passou a vez (Check)"
-	}
-
-	tg.checkRoundOrSurvivorLocked()
 	return nil
 }
 
@@ -354,11 +274,10 @@ func (tg *TableGame) StartNewHand() error {
 		return fmt.Errorf("a mão atual ainda não terminou")
 	}
 	for _, player := range tg.Players {
-		if !player.IsBot && player.Stack <= 0 {
+		if player.Stack <= 0 {
 			return fmt.Errorf("%s precisa recarregar ou sair da mesa", player.Name)
 		}
 	}
-	tg.removeBustedBotsLocked()
 	if len(tg.Players) < 2 {
 		tg.Stage = StageWaiting
 		return fmt.Errorf("são necessários ao menos 2 jogadores para iniciar a próxima mão")
@@ -397,17 +316,6 @@ func (tg *TableGame) AddStack(userID uuid.UUID, amount int64, requestID string) 
 		}
 	}
 	return fmt.Errorf("jogador não está sentado nesta mesa")
-}
-
-func (tg *TableGame) removeBustedBotsLocked() {
-	players := tg.Players[:0]
-	for _, player := range tg.Players {
-		if player.IsBot && player.Stack <= 0 {
-			continue
-		}
-		players = append(players, player)
-	}
-	tg.Players = players
 }
 
 func (tg *TableGame) startNewHandLocked() {
@@ -757,7 +665,6 @@ func (tg *TableGame) GetPublicState() TableStatePayload {
 			SeatNumber:   p.SeatNumber,
 			UserID:       p.UserID,
 			Name:         p.Name,
-			IsBot:        p.IsBot,
 			Stack:        p.Stack,
 			CurrentBet:   p.CurrentBet,
 			CardCount:    len(p.Cards),

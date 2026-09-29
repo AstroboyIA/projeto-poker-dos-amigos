@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users, Bot } from 'lucide-react';
+import { ArrowLeft, UserPlus, CheckCircle2, AlertCircle, Coins, ShieldCheck, Users } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
 import { getTableRoomById } from '../utils/tableRooms';
@@ -15,8 +15,6 @@ interface SeatInfo {
   positionName: string;
 }
 
-type SeatMode = 'bot' | 'open';
-
 export const SeatSelectionPage: React.FC = () => {
   const { user, token, updateUser } = useAuth();
   const navigate = useNavigate();
@@ -24,7 +22,6 @@ export const SeatSelectionPage: React.FC = () => {
   const tableId = searchParams.get('tableId') || 'mesa-vip-01';
   const autoJoin = searchParams.get('autoJoin') === '1';
   const room = getTableRoomById(tableId);
-  const isCreator = Boolean(user?.id && room?.creatorUserId && user.id === room.creatorUserId);
 
   // Configurações da Mesa
   const tableName = `${room?.name || "Mesa VIP Ouro #01 (Texas Hold'em)"} (9-Max)`;
@@ -40,18 +37,6 @@ export const SeatSelectionPage: React.FC = () => {
   const [entering, setEntering] = useState(false);
   const autoJoinStarted = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [seatModes, setSeatModes] = useState<Record<number, SeatMode>>({
-    1: room?.botSeats.includes(1) ? 'bot' : 'open',
-    2: room?.botSeats.includes(2) ? 'bot' : 'open',
-    3: room?.botSeats.includes(3) ? 'bot' : 'open',
-    4: room?.botSeats.includes(4) ? 'bot' : 'open',
-    5: room?.botSeats.includes(5) ? 'bot' : 'open',
-    6: room?.botSeats.includes(6) ? 'bot' : 'open',
-    7: room?.botSeats.includes(7) ? 'bot' : 'open',
-    8: room?.botSeats.includes(8) ? 'bot' : 'open',
-    9: room?.botSeats.includes(9) ? 'bot' : 'open',
-  });
-
   const occupiedNames: Record<number, string> = {
     1: 'Jonatas (Sócio)',
     2: 'Felipe (Sócio)',
@@ -85,19 +70,7 @@ export const SeatSelectionPage: React.FC = () => {
 
   const handleSeatClick = (seat: SeatInfo) => {
     if (seat.isOccupied) return;
-    if (seatModes[seat.seatNumber] === 'bot') return;
     setSelectedSeat(seat.seatNumber);
-  };
-
-  const handleSeatModeChange = (seatNumber: number, mode: SeatMode) => {
-    setSeatModes((prev) => ({
-      ...prev,
-      [seatNumber]: mode,
-    }));
-
-    if (selectedSeat === seatNumber && mode === 'bot') {
-      setSelectedSeat(null);
-    }
   };
 
   const handleConfirmAndEnter = async () => {
@@ -118,12 +91,7 @@ export const SeatSelectionPage: React.FC = () => {
       } else if (user) {
       }
 
-      const botSeats = seats
-        .filter((seat) => !seat.isOccupied && seat.seatNumber !== selectedSeat && seatModes[seat.seatNumber] === 'bot')
-        .map((seat) => seat.seatNumber)
-        .join(',');
-
-      navigate(`/table/live?tableId=${tableId}&seat=${selectedSeat}&buyIn=${buyInAmount}&bots=${botSeats}`);
+      navigate(`/table/live?tableId=${tableId}&seat=${selectedSeat}&buyIn=${buyInAmount}`);
     } catch (err: any) {
       setErrorMessage(err.message || 'Falha ao realizar buy-in ou entrar na mesa');
       setEntering(false);
@@ -137,8 +105,7 @@ export const SeatSelectionPage: React.FC = () => {
     }
   }, [autoJoin, selectedSeat]);
 
-  const openSeatsCount = seats.filter((s) => !s.isOccupied && seatModes[s.seatNumber] !== 'bot').length;
-  const configuredBotCount = seats.filter((s) => !s.isOccupied && seatModes[s.seatNumber] === 'bot').length;
+  const openSeatsCount = seats.filter((seat) => !seat.isOccupied).length;
 
   return (
     <div className="min-h-screen bg-[#07090e] text-white flex flex-col justify-between p-3 sm:p-6 max-w-6xl mx-auto">
@@ -198,7 +165,7 @@ export const SeatSelectionPage: React.FC = () => {
               TEXAS HOLD'EM 9-MAX
             </div>
             <div className="text-[10px] text-zinc-300 tracking-wider">
-              {openSeatsCount} livres • {configuredBotCount} bots configurados
+              {openSeatsCount} assentos livres
             </div>
           </div>
 
@@ -210,7 +177,7 @@ export const SeatSelectionPage: React.FC = () => {
             <SeatButton seat={seats[1]} isSelected={selectedSeat === 2} onClick={() => handleSeatClick(seats[1])} />
           </div>
           <div className="absolute top-2 right-[20%] translate-x-1/2">
-            <SeatButton seat={seats[2]} mode={seatModes[3]} isSelected={selectedSeat === 3} onClick={() => handleSeatClick(seats[2])} />
+            <SeatButton seat={seats[2]} isSelected={selectedSeat === 3} onClick={() => handleSeatClick(seats[2])} />
           </div>
 
           {/* Direita: 2 Assentos (4, 5) */}
@@ -218,7 +185,7 @@ export const SeatSelectionPage: React.FC = () => {
             <SeatButton seat={seats[3]} isSelected={selectedSeat === 4} onClick={() => handleSeatClick(seats[3])} />
           </div>
           <div className="absolute top-[68%] right-2 -translate-y-1/2">
-            <SeatButton seat={seats[4]} mode={seatModes[5]} isSelected={selectedSeat === 5} onClick={() => handleSeatClick(seats[4])} />
+            <SeatButton seat={seats[4]} isSelected={selectedSeat === 5} onClick={() => handleSeatClick(seats[4])} />
           </div>
 
           {/* Fundo: 2 Assentos (6, 7) */}
@@ -226,15 +193,15 @@ export const SeatSelectionPage: React.FC = () => {
             <SeatButton seat={seats[5]} isSelected={selectedSeat === 6} onClick={() => handleSeatClick(seats[5])} />
           </div>
           <div className="absolute bottom-2 left-[32%] -translate-x-1/2">
-            <SeatButton seat={seats[6]} mode={seatModes[7]} isSelected={selectedSeat === 7} onClick={() => handleSeatClick(seats[6])} />
+            <SeatButton seat={seats[6]} isSelected={selectedSeat === 7} onClick={() => handleSeatClick(seats[6])} />
           </div>
 
           {/* Esquerda: 2 Assentos (8, 9) */}
           <div className="absolute top-[68%] left-2 -translate-y-1/2">
-            <SeatButton seat={seats[7]} mode={seatModes[8]} isSelected={selectedSeat === 8} onClick={() => handleSeatClick(seats[7])} />
+            <SeatButton seat={seats[7]} isSelected={selectedSeat === 8} onClick={() => handleSeatClick(seats[7])} />
           </div>
           <div className="absolute top-[32%] left-2 -translate-y-1/2">
-            <SeatButton seat={seats[8]} mode={seatModes[9]} isSelected={selectedSeat === 9} onClick={() => handleSeatClick(seats[8])} />
+            <SeatButton seat={seats[8]} isSelected={selectedSeat === 9} onClick={() => handleSeatClick(seats[8])} />
           </div>
         </div>
       </div>
@@ -293,52 +260,6 @@ export const SeatSelectionPage: React.FC = () => {
               </label>
             </div>
 
-            <div className="space-y-2 pt-2">
-              {isCreator ? (
-                <>
-                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#d4af37]">
-                    <Bot size={15} />
-                    <span>Configurar assentos da sala</span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {seats.filter((seat) => !seat.isOccupied).map((seat) => (
-                  <div
-                    key={seat.seatNumber}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-[#0b0e14] p-2"
-                  >
-                    <span className="text-[11px] font-bold text-zinc-200">Assento #{seat.seatNumber}</span>
-                    <div className="grid grid-cols-2 rounded-lg border border-zinc-700 overflow-hidden text-[10px] font-extrabold uppercase">
-                      <button
-                        type="button"
-                        onClick={() => handleSeatModeChange(seat.seatNumber, 'open')}
-                        className={`px-2 py-1 transition cursor-pointer ${
-                          seatModes[seat.seatNumber] !== 'bot'
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-zinc-900 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        Livre
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSeatModeChange(seat.seatNumber, 'bot')}
-                        className={`px-2 py-1 transition cursor-pointer ${
-                          seatModes[seat.seatNumber] === 'bot'
-                            ? 'bg-[#d4af37] text-black'
-                            : 'bg-zinc-900 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        Bot
-                      </button>
-                    </div>
-                  </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs text-zinc-400">A configuração de bots é exclusiva do criador da mesa.</p>
-              )}
-            </div>
           </div>
 
           {/* Coluna 2: Configuração de Buy-in */}
@@ -401,12 +322,11 @@ export const SeatSelectionPage: React.FC = () => {
 // Subcomponente de Assento Visual
 interface SeatButtonProps {
   seat: SeatInfo;
-  mode?: SeatMode;
   isSelected: boolean;
   onClick: () => void;
 }
 
-const SeatButton: React.FC<SeatButtonProps> = ({ seat, mode = 'open', isSelected, onClick }) => {
+const SeatButton: React.FC<SeatButtonProps> = ({ seat, isSelected, onClick }) => {
   if (seat.isOccupied) {
     return (
       <div className="flex flex-col items-center select-none opacity-85">
@@ -418,20 +338,6 @@ const SeatButton: React.FC<SeatButtonProps> = ({ seat, mode = 'open', isSelected
         </div>
         <div className="mt-0.5 bg-black/80 px-1.5 py-0.5 rounded border border-zinc-800 text-[9px] font-mono text-[#f5d77f] font-bold">
           ${seat.playerStack}
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'bot') {
-    return (
-      <div className="flex flex-col items-center select-none opacity-90">
-        <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-gradient-to-br from-[#d4af37] to-amber-800 border-2 border-yellow-200 flex flex-col items-center justify-center shadow-lg text-black">
-          <Bot size={15} />
-          <span className="text-[9px] font-extrabold uppercase mt-0.5">#{seat.seatNumber}</span>
-        </div>
-        <div className="mt-0.5 px-1.5 py-0.5 rounded bg-[#d4af37] text-[9px] font-extrabold tracking-wider uppercase text-black">
-          BOT
         </div>
       </div>
     );

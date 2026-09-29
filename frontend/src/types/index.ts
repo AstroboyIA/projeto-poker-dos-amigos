@@ -38,7 +38,6 @@ export interface PokerTable {
   max_seats: number;
   status: string;
   current_pot: number;
-  bot_seats?: number[];
   occupied_seats?: number[];
   password?: string;
   created_by?: string;
@@ -83,7 +82,6 @@ export interface ServerPlayerInfo {
   seat_number: number;
   user_id?: string;
   name: string;
-  is_bot: boolean;
   stack: number;
   current_bet: number;
   card_count: number;

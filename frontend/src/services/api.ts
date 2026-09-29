@@ -76,7 +76,6 @@ export const api = {
       buy_in_min: number;
       buy_in_max: number;
       max_seats: number;
-      bot_seats: number[];
       occupied_seats: number[];
       password?: string;
     }

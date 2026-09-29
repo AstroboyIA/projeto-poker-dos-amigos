@@ -121,43 +121,33 @@ func TestJoinPlayerRejectsOccupiedSeatWithoutChangingTable(t *testing.T) {
 	}
 }
 
-func TestBotActionAdvancesTurnAfterHumanAction(t *testing.T) {
+func TestSecondPlayerCanActAfterFirstPlayer(t *testing.T) {
 	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
 	userID := uuid.New()
+	otherUserID := uuid.New()
 
 	if err := table.JoinPlayer(userID, "Jogador", 1, 2000); err != nil {
 		t.Fatalf("jogador não entrou: %v", err)
 	}
-	if err := table.AddBot(2, "Bot #2", 2000); err != nil {
-		t.Fatalf("bot não entrou: %v", err)
-	}
-	if state := table.GetPublicState(); state.Stage != engine.StageWaiting {
-		t.Fatalf("adicionar um bot não deve iniciar a partida automaticamente: %s", state.Stage)
+	if err := table.JoinPlayer(otherUserID, "Outro jogador", 2, 2000); err != nil {
+		t.Fatalf("segundo jogador não entrou: %v", err)
 	}
 	if err := table.Start(); err != nil {
-		t.Fatalf("não foi possível iniciar a mesa com bot: %v", err)
+		t.Fatalf("não foi possível iniciar a mesa: %v", err)
 	}
 
 	state := table.GetPublicState()
 	current := state.Players[state.CurrentTurnIdx]
-	if current.UserID == nil {
-		t.Fatalf("esperava que o jogador humano fosse o primeiro a agir")
+	if current.UserID == nil || *current.UserID != userID {
+		t.Fatalf("esperava o primeiro jogador no turno, estado: %+v", state)
 	}
 
 	if err := table.ProcessAction(*current.UserID, engine.ActionCall, 0); err != nil {
-		t.Fatalf("call do jogador falhou: %v", err)
+		t.Fatalf("call do primeiro jogador falhou: %v", err)
 	}
-	afterHuman := table.GetPublicState()
-	if !afterHuman.Players[afterHuman.CurrentTurnIdx].IsBot {
-		t.Fatalf("esperava turno do bot após call, estado: %+v", afterHuman)
-	}
-
-	if err := table.ProcessBotAction(); err != nil {
-		t.Fatalf("ação do bot falhou: %v", err)
-	}
-	afterBot := table.GetPublicState()
-	if afterBot.Players[afterBot.CurrentTurnIdx].IsBot {
-		t.Fatalf("bot não deveria permanecer no turno após agir")
+	next := table.GetPublicState().Players[table.GetPublicState().CurrentTurnIdx]
+	if next.UserID == nil || *next.UserID != otherUserID {
+		t.Fatalf("esperava o turno do segundo jogador, estado: %+v", table.GetPublicState())
 	}
 }
 

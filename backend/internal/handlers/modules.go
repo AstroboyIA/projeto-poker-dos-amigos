@@ -37,7 +37,6 @@ func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
 			MaxSeats:      9,
 			Status:        models.TableStatusRunning,
 			CurrentPot:    1450,
-			BotSeats:      []int{3, 5, 7},
 			OccupiedSeats: []int{1, 2, 4, 6},
 			CreatedBy:     "Clube",
 			CreatedAt:     time.Now(),
@@ -54,7 +53,6 @@ func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
 			MaxSeats:      9,
 			Status:        models.TableStatusRunning,
 			CurrentPot:    320,
-			BotSeats:      []int{2, 8},
 			OccupiedSeats: []int{1, 4, 6},
 			Password:      "1234",
 			CreatedBy:     "Felipe",
@@ -72,7 +70,6 @@ func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
 			MaxSeats:      9,
 			Status:        models.TableStatusRunning,
 			CurrentPot:    28000,
-			BotSeats:      []int{},
 			OccupiedSeats: []int{1, 2, 3, 4, 5, 6, 7, 8, 9},
 			CreatedBy:     "Diretoria",
 			CreatedAt:     time.Now(),
@@ -178,7 +175,6 @@ type CreateTableRequest struct {
 	BuyInMin      int64  `json:"buy_in_min"`
 	BuyInMax      int64  `json:"buy_in_max"`
 	MaxSeats      int    `json:"max_seats"`
-	BotSeats      []int  `json:"bot_seats"`
 	OccupiedSeats []int  `json:"occupied_seats"`
 	Password      string `json:"password,omitempty"`
 }
@@ -202,9 +198,6 @@ func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 	if req.MaxSeats <= 0 {
 		req.MaxSeats = 9
 	}
-	if req.BotSeats == nil {
-		req.BotSeats = []int{}
-	}
 	if req.OccupiedSeats == nil {
 		req.OccupiedSeats = []int{}
 	}
@@ -220,7 +213,6 @@ func (h *ModulesHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		MaxSeats:      req.MaxSeats,
 		Status:        models.TableStatusWaiting,
 		CurrentPot:    0,
-		BotSeats:      req.BotSeats,
 		OccupiedSeats: req.OccupiedSeats,
 		Password:      req.Password,
 		CreatedBy:     claims.Nome,
@@ -264,14 +256,6 @@ func (h *ModulesHandler) OccupySeat(w http.ResponseWriter, r *http.Request) {
 				h.mu.Unlock()
 				response.Error(w, http.StatusBadRequest, fmt.Sprintf("Assento deve estar entre 1 e %d", t.MaxSeats))
 				return
-			}
-
-			for _, s := range t.BotSeats {
-				if s == req.SeatNumber {
-					h.mu.Unlock()
-					response.Error(w, http.StatusConflict, "Assento reservado para bot")
-					return
-				}
 			}
 
 			for _, s := range t.OccupiedSeats {
@@ -479,13 +463,6 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 					if seat == req.SeatNumber {
 						h.mu.Unlock()
 						response.Error(w, http.StatusConflict, "Assento já está ocupado")
-						return
-					}
-				}
-				for _, seat := range table.BotSeats {
-					if seat == req.SeatNumber {
-						h.mu.Unlock()
-						response.Error(w, http.StatusConflict, "Assento reservado para bot")
 						return
 					}
 				}
