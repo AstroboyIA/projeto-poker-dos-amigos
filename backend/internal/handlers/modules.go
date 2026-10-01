@@ -302,7 +302,7 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 		if tableID, err := uuid.Parse(req.TableID); err == nil {
 			if table, exists := h.hub.GameService().GetTable(tableID); exists {
 				if stack, removed := table.LeavePlayerWithStack(claims.UserID); removed {
-					if user, exists := h.authHandler.GetUserByEmail(claims.Email); exists {
+					if user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email); exists {
 						h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
 						wallet, err := h.wallets.ReturnFromTable(user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
 						if err == nil {
@@ -323,7 +323,7 @@ func (h *ModulesHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusUnauthorized, "Não autenticado")
 		return
 	}
-	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
 	if !exists {
 		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
 		return
@@ -350,7 +350,7 @@ func (h *ModulesHandler) DevDeposit(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Valor de depósito inválido")
 		return
 	}
-	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
 	if !exists {
 		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
 		return
@@ -428,7 +428,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
 	if !exists {
 		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
 		return
@@ -521,7 +521,7 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Dados de recarga inválidos")
 		return
 	}
-	user, exists := h.authHandler.GetUserByEmail(claims.Email)
+	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
 	if !exists {
 		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
 		return

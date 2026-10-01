@@ -60,7 +60,7 @@ export const WalletPage: React.FC = () => {
           </div>
         ))}
       </section>
-      <p className="text-xs text-zinc-500">{user?.email}</p>
+      <p className="text-xs text-zinc-500">{user?.email || user?.username}</p>
     </main>
   );
 };

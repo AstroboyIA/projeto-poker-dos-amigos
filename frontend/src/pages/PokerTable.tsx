@@ -109,7 +109,7 @@ export const PokerTablePage: React.FC = () => {
   const initialPlayers: TablePlayer[] = [{
     id: chosenSeat,
     seatNumber: chosenSeat,
-    name: user?.nome_completo || 'Você (VIP)',
+    name: user?.nome_completo || user?.username || 'Você (VIP)',
     isUser: true,
     stack: initialBuyIn,
     currentBet: 0,
@@ -261,7 +261,7 @@ export const PokerTablePage: React.FC = () => {
         id: sp.id,
         seatNumber: sp.seat_number,
         userId: sp.user_id,
-        name: isCurrentUser ? `${user?.nome_completo || 'Você'} (VIP)` : sp.name,
+        name: isCurrentUser ? `${user?.nome_completo || user?.username || 'Você'} (VIP)` : sp.name,
         isUser: isCurrentUser,
         stack: Number.isFinite(sp.stack) ? sp.stack : 0,
         currentBet: Number.isFinite(sp.current_bet) ? sp.current_bet : 0,

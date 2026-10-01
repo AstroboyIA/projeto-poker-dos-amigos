@@ -24,6 +24,7 @@ const (
 
 type User struct {
 	ID           uuid.UUID      `json:"id"`
+	Username     string         `json:"username"`
 	NomeCompleto string         `json:"nome_completo"`
 	Telefone     string         `json:"telefone"`
 	Email        string         `json:"email"`
@@ -46,12 +47,14 @@ type WalletSummary struct {
 }
 
 type LoginRequest struct {
+	Username  string `json:"username"`
 	Email     string `json:"email"`
 	Senha     string `json:"senha"`
 	LembrarMe bool   `json:"lembrar_me"`
 }
 
 type RegisterRequest struct {
+	Username     string `json:"username"`
 	NomeCompleto string `json:"nome_completo"`
 	Telefone     string `json:"telefone"`
 	Email        string `json:"email"`

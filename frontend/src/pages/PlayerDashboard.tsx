@@ -175,7 +175,7 @@ export const PlayerDashboard: React.FC = () => {
           </div>
           <div>
             <h4 className="text-sm font-bold text-[#f5d77f]">
-              Bem-vindo, {user?.nome_completo || 'Jogador'}!
+              Bem-vindo, {user?.nome_completo || user?.username || 'Jogador'}!
             </h4>
             <p className="text-xs text-zinc-400">
               Saldo: <span className="text-[#f5d77f] font-bold">{user?.saldo_fichas || 1000} fichas</span> | Acesse o módulo desejado
@@ -195,10 +195,10 @@ export const PlayerDashboard: React.FC = () => {
         {/* Status do Jogador */}
         <div className="bg-[#12151c] border border-[#d4af37]/30 rounded-xl px-4 py-2.5 flex items-center space-x-3">
           <div className="w-8 h-8 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center text-[#f5d77f] font-bold text-xs">
-            {user?.nome_completo?.charAt(0) || 'J'}
+            {(user?.nome_completo || user?.username)?.charAt(0) || 'J'}
           </div>
           <div>
-            <p className="text-xs font-bold text-zinc-200">{user?.nome_completo || 'Jogador'}</p>
+            <p className="text-xs font-bold text-zinc-200">{user?.nome_completo || user?.username || 'Jogador'}</p>
             <p className="text-[10px] text-[#d4af37] font-semibold flex items-center gap-1">
               👑 MEMBRO DO CLUBE
             </p>

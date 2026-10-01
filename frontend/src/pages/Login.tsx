@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [senha, setSenha] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [lembrarMe, setLembrarMe] = useState(false);
@@ -22,7 +22,7 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const data = await api.login(email, senha, lembrarMe);
+      const data = await api.login(username, senha, lembrarMe);
       login(data.token, data.user);
       if (data.user.role === 'admin_gerente' || data.user.role === 'gerente') {
         navigate('/manager');
@@ -56,18 +56,19 @@ export const LoginPage: React.FC = () => {
 
         {/* Formulário */}
         <form onSubmit={handleLogin} className="space-y-4">
-          {/* Campo E-mail */}
+          {/* Campo Username / E-mail */}
           <div className="space-y-1">
             <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
-              <Mail size={14} className="text-[#d4af37]" />
-              E-MAIL
+              <User size={14} className="text-[#d4af37]" />
+              USERNAME OU E-MAIL
             </label>
             <div className="relative">
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Digite seu e-mail"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Digite seu username ou e-mail"
+                autoComplete="username"
                 required
                 className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#f0cc66] focus:ring-1 focus:ring-[#f0cc66] transition"
               />

@@ -13,10 +13,11 @@ import (
 )
 
 type Claims struct {
-	UserID uuid.UUID       `json:"user_id"`
-	Email  string          `json:"email"`
-	Nome   string          `json:"nome"`
-	Role   models.UserRole `json:"role"`
+	UserID   uuid.UUID       `json:"user_id"`
+	Username string          `json:"username,omitempty"`
+	Email    string          `json:"email"`
+	Nome     string          `json:"nome"`
+	Role     models.UserRole `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -32,11 +33,16 @@ func NewTokenManager(secret string) *TokenManager {
 
 func (tm *TokenManager) GenerateToken(user *models.User, duration time.Duration) (string, int64, error) {
 	exp := time.Now().Add(duration)
+	nome := user.NomeCompleto
+	if strings.TrimSpace(nome) == "" {
+		nome = user.Username
+	}
 	claims := &Claims{
-		UserID: user.ID,
-		Email:  user.Email,
-		Nome:   user.NomeCompleto,
-		Role:   user.Role,
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Nome:     nome,
+		Role:     user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

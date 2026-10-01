@@ -128,7 +128,7 @@ export const SeatSelectionPage: React.FC = () => {
               </p>
             </div>
             <div className="w-9 h-9 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center text-[#f5d77f] font-bold text-sm">
-              {user?.nome_completo?.charAt(0) || 'J'}
+              {(user?.nome_completo || user?.username)?.charAt(0) || 'J'}
             </div>
           </div>
         </div>

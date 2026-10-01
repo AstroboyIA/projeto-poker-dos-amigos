@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { User, Phone, Mail, Calendar, MapPin, ArrowLeft } from 'lucide-react';
+import { User, Phone, Mail, Calendar, MapPin, ArrowLeft, Lock } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const RegisterPage: React.FC = () => {
+  const [modoRapido, setModoRapido] = useState(true);
+  const [username, setUsername] = useState('');
+  const [senha, setSenha] = useState('');
   const [nomeCompleto, setNomeCompleto] = useState('');
   const [telefone, setTelefone] = useState('');
   const [email, setEmail] = useState('');
-  const senha = 'poker123';
   const [dataNasc, setDataNasc] = useState('');
   const [cidadeEstado, setCidadeEstado] = useState('');
   const [aceitouTermos, setAceitouTermos] = useState(false);
@@ -30,15 +32,17 @@ export const RegisterPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const data = await api.register({
-        nome_completo: nomeCompleto,
-        telefone,
-        email,
-        senha,
-        data_nascimento: dataNasc,
-        cidade_estado: cidadeEstado,
-        aceitou_termos: aceitouTermos,
-      });
+      const data = await api.register(modoRapido
+        ? { username, senha, aceitou_termos: aceitouTermos }
+        : {
+            nome_completo: nomeCompleto,
+            telefone,
+            email,
+            senha,
+            data_nascimento: dataNasc,
+            cidade_estado: cidadeEstado,
+            aceitou_termos: aceitouTermos,
+          });
 
       login(data.token, data.user);
       navigate('/player');
@@ -71,6 +75,23 @@ export const RegisterPage: React.FC = () => {
           <span className="text-[#d4af37] text-xs">◆</span>
         </div>
 
+        <div className="grid grid-cols-2 gap-2 rounded-lg bg-[#12141a]/90 p-1">
+          <button
+            type="button"
+            onClick={() => setModoRapido(true)}
+            className={`rounded-md px-2 py-2 text-[10px] font-bold tracking-wider transition ${modoRapido ? 'gold-btn text-black' : 'text-zinc-400 hover:text-white'}`}
+          >
+            USERNAME E SENHA
+          </button>
+          <button
+            type="button"
+            onClick={() => setModoRapido(false)}
+            className={`rounded-md px-2 py-2 text-[10px] font-bold tracking-wider transition ${!modoRapido ? 'gold-btn text-black' : 'text-zinc-400 hover:text-white'}`}
+          >
+            CADASTRO COMPLETO
+          </button>
+        </div>
+
         {error && (
           <div className="bg-red-950/80 border border-red-500/50 text-red-200 text-sm px-4 py-2.5 rounded-lg text-center">
             {error}
@@ -78,6 +99,41 @@ export const RegisterPage: React.FC = () => {
         )}
 
         <form onSubmit={handleRegister} className="space-y-3.5">
+          {modoRapido ? (
+            <>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
+                  <User size={13} className="text-[#d4af37]" />
+                  USERNAME
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Escolha seu username"
+                  autoComplete="username"
+                  required
+                  className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
+                  <Lock size={13} className="text-[#d4af37]" />
+                  SENHA
+                </label>
+                <input
+                  type="password"
+                  value={senha}
+                  onChange={(e) => setSenha(e.target.value)}
+                  placeholder="Crie uma senha"
+                  autoComplete="new-password"
+                  required
+                  className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
+                />
+              </div>
+            </>
+          ) : (
+            <>
           {/* Nome Completo */}
           <div className="space-y-1">
             <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
@@ -89,6 +145,23 @@ export const RegisterPage: React.FC = () => {
               value={nomeCompleto}
               onChange={(e) => setNomeCompleto(e.target.value)}
               placeholder="Digite seu nome completo"
+              required
+              className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
+            />
+          </div>
+
+          {/* Senha */}
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
+              <Lock size={13} className="text-[#d4af37]" />
+              SENHA
+            </label>
+            <input
+              type="password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder="Crie uma senha"
+              autoComplete="new-password"
               required
               className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
             />
@@ -158,7 +231,9 @@ export const RegisterPage: React.FC = () => {
             />
           </div>
 
-          {/* Termos e Declaração +18 */}
+          </>
+          )}
+
           <div className="pt-2">
             <label className="flex items-start space-x-2.5 cursor-pointer">
               <input
@@ -179,7 +254,7 @@ export const RegisterPage: React.FC = () => {
             disabled={loading}
             className="w-full py-3 rounded-lg gold-btn text-black font-extrabold text-sm tracking-widest uppercase transition mt-4 cursor-pointer disabled:opacity-50"
           >
-            {loading ? 'ENVIANDO...' : 'ENVIAR INSCRIÇÃO'}
+            {loading ? 'CRIANDO CONTA...' : modoRapido ? 'CRIAR CONTA' : 'ENVIAR INSCRIÇÃO'}
           </button>
         </form>
 

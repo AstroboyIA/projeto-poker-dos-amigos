@@ -239,7 +239,7 @@ export const TableLobbyPage: React.FC = () => {
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
           token={token}
-          createdBy={user?.nome_completo || 'Jogador'}
+          createdBy={user?.nome_completo || user?.username || 'Jogador'}
         />
       )}
 

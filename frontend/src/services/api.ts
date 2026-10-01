@@ -3,11 +3,11 @@ import type { AuthResponse, User, Tournament, RankingEntry, PokerTable, Announce
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') + '/api';
 
 export const api = {
-  async login(email: string, senha: string, lembrarMe: boolean): Promise<AuthResponse> {
+  async login(username: string, senha: string, lembrarMe: boolean): Promise<AuthResponse> {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, senha, lembrar_me: lembrarMe }),
+      body: JSON.stringify({ username, senha, lembrar_me: lembrarMe }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha no login');
@@ -15,13 +15,14 @@ export const api = {
   },
 
   async register(params: {
-    nome_completo: string;
-    telefone: string;
-    email: string;
-    senha?: string;
-    data_nascimento: string;
-    cidade_estado: string;
-    aceitou_termos: boolean;
+    username?: string;
+    nome_completo?: string;
+    telefone?: string;
+    email?: string;
+    senha: string;
+    data_nascimento?: string;
+    cidade_estado?: string;
+    aceitou_termos?: boolean;
   }): Promise<AuthResponse> {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
