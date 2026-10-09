@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/config"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/database"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/engine"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/handlers"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/ws"
@@ -18,14 +21,32 @@ import (
 
 func main() {
 	cfg := config.LoadConfig()
+	if cfg.DatabaseURL == "" {
+		log.Fatal("DATABASE_URL é obrigatória para compartilhar mesas entre instâncias")
+	}
+	dbCtx, cancelDB := context.WithTimeout(context.Background(), 15*time.Second)
+	store, err := database.Open(dbCtx, cfg.DatabaseURL)
+	cancelDB()
+	if err != nil {
+		log.Fatalf("Falha ao conectar ao PostgreSQL compartilhado: %v", err)
+	}
+	defer store.Close()
+	migrationCtx, cancelMigration := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := store.ApplySharedTableMigration(migrationCtx); err != nil {
+		cancelMigration()
+		log.Fatalf("Falha ao aplicar migração do estado compartilhado: %v", err)
+	}
+	cancelMigration()
 
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
 	gameService := engine.NewGameService()
 	hub := ws.NewHub(gameService)
+	hub.SetStore(store)
 	go hub.Run()
+	go hub.ListenForSharedUpdates(context.Background())
 
 	authHandler := handlers.NewAuthHandler(tokenManager)
-	modulesHandler := handlers.NewModulesHandler(hub, authHandler)
+	modulesHandler := handlers.NewModulesHandlerWithStore(hub, authHandler, store)
 	hub.SetReleaseSeatHandler(modulesHandler.ReleaseSeat)
 
 	r := chi.NewRouter()

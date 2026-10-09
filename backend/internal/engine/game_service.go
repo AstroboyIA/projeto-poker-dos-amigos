@@ -110,15 +110,176 @@ type TableGame struct {
 	mu             sync.Mutex
 }
 
+type TableSnapshot struct {
+	TableID        uuid.UUID
+	SmallBlind     int64
+	BigBlind       int64
+	Players        []PlayerSnapshot
+	Stage          GameStage
+	HandNumber     int
+	Pot            int64
+	CurrentBet     int64
+	CurrentTurnIdx int
+	DealerIdx      int
+	CommunityCards []models.Card
+	Deck           []models.Card
+	WinnerMessage  string
+	RebuyRequests  []string
+}
+
+type PlayerSnapshot struct {
+	ID           int
+	SeatNumber   int
+	UserID       *uuid.UUID
+	Name         string
+	Stack        int64
+	CurrentBet   int64
+	Cards        []models.Card
+	HasFolded    bool
+	IsAllIn      bool
+	HasActed     bool
+	LastAction   string
+	IsDealer     bool
+	IsSmallBlind bool
+	IsBigBlind   bool
+	HandEval     *HandEvaluation
+}
+
 type GameService struct {
 	tables map[uuid.UUID]*TableGame
 	mu     sync.RWMutex
+}
+
+func (tg *TableGame) Snapshot() TableSnapshot {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	snapshot := TableSnapshot{
+		TableID:        tg.TableID,
+		SmallBlind:     tg.SmallBlind,
+		BigBlind:       tg.BigBlind,
+		Stage:          tg.Stage,
+		HandNumber:     tg.HandNumber,
+		Pot:            tg.Pot,
+		CurrentBet:     tg.CurrentBet,
+		CurrentTurnIdx: tg.CurrentTurnIdx,
+		DealerIdx:      tg.DealerIdx,
+		CommunityCards: append([]models.Card(nil), tg.CommunityCards...),
+		Deck:           append([]models.Card(nil), tg.Deck...),
+		WinnerMessage:  tg.WinnerMessage,
+	}
+	snapshot.Players = make([]PlayerSnapshot, 0, len(tg.Players))
+	for _, player := range tg.Players {
+		copyPlayer := PlayerSnapshot{
+			ID:           player.ID,
+			SeatNumber:   player.SeatNumber,
+			Name:         player.Name,
+			Stack:        player.Stack,
+			CurrentBet:   player.CurrentBet,
+			Cards:        append([]models.Card(nil), player.Cards...),
+			HasFolded:    player.HasFolded,
+			IsAllIn:      player.IsAllIn,
+			HasActed:     player.HasActed,
+			LastAction:   player.LastAction,
+			IsDealer:     player.IsDealer,
+			IsSmallBlind: player.IsSmallBlind,
+			IsBigBlind:   player.IsBigBlind,
+		}
+		if player.UserID != nil {
+			userID := *player.UserID
+			copyPlayer.UserID = &userID
+		}
+		if player.HandEval != nil {
+			evaluation := *player.HandEval
+			copyPlayer.HandEval = &evaluation
+		}
+		snapshot.Players = append(snapshot.Players, copyPlayer)
+	}
+	for requestID := range tg.rebuyRequests {
+		snapshot.RebuyRequests = append(snapshot.RebuyRequests, requestID)
+	}
+	return snapshot
+}
+
+func NewTableGameFromSnapshot(snapshot TableSnapshot) *TableGame {
+	table := &TableGame{
+		TableID:        snapshot.TableID,
+		SmallBlind:     snapshot.SmallBlind,
+		BigBlind:       snapshot.BigBlind,
+		Stage:          snapshot.Stage,
+		HandNumber:     snapshot.HandNumber,
+		Pot:            snapshot.Pot,
+		CurrentBet:     snapshot.CurrentBet,
+		CurrentTurnIdx: snapshot.CurrentTurnIdx,
+		DealerIdx:      snapshot.DealerIdx,
+		CommunityCards: append([]models.Card(nil), snapshot.CommunityCards...),
+		Deck:           append([]models.Card(nil), snapshot.Deck...),
+		WinnerMessage:  snapshot.WinnerMessage,
+		Shuffler:       NewPhysicalMemoryShuffler(),
+		rebuyRequests:  make(map[string]struct{}, len(snapshot.RebuyRequests)),
+	}
+	table.Players = make([]*PlayerState, 0, len(snapshot.Players))
+	for _, player := range snapshot.Players {
+		restored := &PlayerState{
+			ID:           player.ID,
+			SeatNumber:   player.SeatNumber,
+			UserID:       player.UserID,
+			Name:         player.Name,
+			Stack:        player.Stack,
+			CurrentBet:   player.CurrentBet,
+			Cards:        append([]models.Card(nil), player.Cards...),
+			HasFolded:    player.HasFolded,
+			IsAllIn:      player.IsAllIn,
+			HasActed:     player.HasActed,
+			LastAction:   player.LastAction,
+			IsDealer:     player.IsDealer,
+			IsSmallBlind: player.IsSmallBlind,
+			IsBigBlind:   player.IsBigBlind,
+			HandEval:     player.HandEval,
+		}
+		if player.UserID != nil {
+			userID := *player.UserID
+			restored.UserID = &userID
+		}
+		if player.HandEval != nil {
+			evaluation := *player.HandEval
+			restored.HandEval = &evaluation
+		}
+		table.Players = append(table.Players, restored)
+	}
+	for _, requestID := range snapshot.RebuyRequests {
+		table.rebuyRequests[requestID] = struct{}{}
+	}
+	return table
+}
+
+func NewWaitingTableGame(tableID uuid.UUID, smallBlind, bigBlind int64) *TableGame {
+	if smallBlind <= 0 {
+		smallBlind = 25
+	}
+	if bigBlind <= 0 {
+		bigBlind = 50
+	}
+	return NewTableGameFromSnapshot(TableSnapshot{
+		TableID:    tableID,
+		SmallBlind: smallBlind,
+		BigBlind:   bigBlind,
+		Players:    []PlayerSnapshot{},
+		Stage:      StageWaiting,
+		HandNumber: 1,
+	})
 }
 
 func NewGameService() *GameService {
 	return &GameService{
 		tables: make(map[uuid.UUID]*TableGame),
 	}
+}
+
+func (gs *GameService) SetTable(table *TableGame) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	gs.tables[table.TableID] = table
 }
 
 func (gs *GameService) GetOrCreateTable(tableID uuid.UUID, smallBlind, bigBlind int64) *TableGame {

@@ -414,17 +414,16 @@ export const PokerTablePage: React.FC = () => {
     ? evaluate7Cards([...effectiveUserCards, ...communityCards])
     : null;
 
-  // Posição das apostas em relação a cada assento.
-  const seatPositions = [
-    { betPos: 'bottom' as const },
-    { betPos: 'bottom' as const },
-    { betPos: 'bottom' as const },
-    { betPos: 'left' as const },
-    { betPos: 'left' as const },
-    { betPos: 'top' as const },
-    { betPos: 'top' as const },
-    { betPos: 'right' as const },
-    { betPos: 'right' as const },
+  const tablePlayerPositions = [
+    { left: '24%', top: '18%' },
+    { left: '50%', top: '14%' },
+    { left: '76%', top: '18%' },
+    { left: '85%', top: '42%' },
+    { left: '81%', top: '68%' },
+    { left: '66%', top: '82%' },
+    { left: '34%', top: '82%' },
+    { left: '15%', top: '68%' },
+    { left: '11%', top: '42%' },
   ];
 
   const renderSeatGroup = (seatNumbers: number[], className: string) => (
@@ -447,12 +446,57 @@ export const PokerTablePage: React.FC = () => {
               isActiveTurn={isTurn}
               actionTimer={actionTimer}
               maxActionTimer={MAX_ACTION_TIME}
-              showCards={stage === 'SHOWDOWN' && !player.hasFolded}
-              betPosition={seatPositions[player.seatNumber - 1]?.betPos || 'bottom'}
             />
           );
         })}
     </div>
+  );
+
+  const renderTablePlayerAssets = () => (
+    <>
+      {players.map((player) => {
+        const position = tablePlayerPositions[player.seatNumber - 1];
+        if (!position) return null;
+
+        const cards = player.isUser && effectiveUserCards.length === 2
+          ? effectiveUserCards
+          : player.cards;
+        const showCards = cards.length === 2 && (player.isUser || (stage === 'SHOWDOWN' && !player.hasFolded));
+
+        return (
+          <div
+            key={`table-assets-${player.id}`}
+            className="pointer-events-none absolute z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+            style={position}
+          >
+            {!player.hasFolded && (
+              <>
+                <div className="flex items-center gap-1 rounded-full bg-black/75 px-1.5 py-0.5 text-[9px] font-mono font-bold text-[#f5d77f] shadow">
+                  <PokerChip value={100} size="sm" color="gold" />
+                  ${player.stack.toLocaleString('pt-BR')}
+                </div>
+                <div className="flex -space-x-0.5">
+                  {showCards ? (
+                    <>
+                      <CardView card={cards[0]} />
+                      <CardView card={cards[1]} />
+                    </>
+                  ) : (
+                    <>
+                      <CardView hidden />
+                      <CardView hidden />
+                    </>
+                  )}
+                </div>
+                {player.currentBet > 0 && (
+                  <ChipStack amount={player.currentBet} size="sm" showLabel={true} />
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 
   return (
@@ -637,7 +681,9 @@ export const PokerTablePage: React.FC = () => {
         )}
 
         {/* Mesa Oval de Feltro 9-Max */}
-        <div className="col-span-3 row-start-3 flex h-[430px] w-full max-w-5xl flex-col items-center justify-center rounded-[200px] border-[14px] border-[#181109] poker-felt p-4 shadow-[0_0_50px_rgba(0,0,0,0.9),inset_0_0_60px_rgba(0,0,0,0.8)] sm:h-[490px] sm:rounded-[240px] sm:border-[18px] lg:col-span-1 lg:col-start-2 lg:row-start-2">
+        <div className="relative col-span-3 row-start-3 flex h-[430px] w-full max-w-5xl flex-col items-center justify-center rounded-[200px] border-[14px] border-[#181109] poker-felt p-4 shadow-[0_0_50px_rgba(0,0,0,0.9),inset_0_0_60px_rgba(0,0,0,0.8)] sm:h-[490px] sm:rounded-[240px] sm:border-[18px] lg:col-span-1 lg:col-start-2 lg:row-start-2">
+          {renderTablePlayerAssets()}
+
           {/* Logo da Mesa */}
           <div className="text-center opacity-30 select-none pointer-events-none mb-1">
             <div className="text-[#d4af37] text-sm sm:text-base font-black tracking-widest uppercase">
@@ -796,23 +842,8 @@ export const PokerTablePage: React.FC = () => {
 
         {/* Informações do Jogador e Botoeira de Ação */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          {/* Suas Cartas e Informações de Jogo */}
+          {/* Informações de jogo do jogador */}
           <div className="flex items-center space-x-3 sm:space-x-4 w-full sm:w-auto">
-            {/* Suas 2 Cartas Fechadas */}
-            <div className="flex space-x-1.5 flex-shrink-0">
-              {effectiveUserCards && effectiveUserCards.length === 2 ? (
-                <>
-                  <CardView card={effectiveUserCards[0]} />
-                  <CardView card={effectiveUserCards[1]} />
-                </>
-              ) : (
-                <>
-                  <CardView hidden />
-                  <CardView hidden />
-                </>
-              )}
-            </div>
-
             {/* Nome, Stack com Ficha e Leitura da Mão */}
             <div className="flex-grow">
               <div className="flex items-center space-x-2">
@@ -828,21 +859,6 @@ export const PokerTablePage: React.FC = () => {
                     {players[currentTurnIdx]?.name} está agindo...
                   </span>
                 )}
-              </div>
-
-              {/* Stack Visual com Mini Ficha */}
-              <div className="flex items-center space-x-2 mt-0.5">
-                <div className="flex items-center space-x-1 text-xs text-zinc-300 font-mono">
-                  <PokerChip value={100} size="sm" color="gold" />
-                  <span>
-                    Stack: <strong className="text-white">${userPlayer?.stack.toLocaleString('pt-BR') || 0}</strong>
-                  </span>
-                </div>
-                {userPlayer?.currentBet ? (
-                  <span className="text-[10px] text-amber-300 font-mono">
-                    (Aposta: ${userPlayer.currentBet})
-                  </span>
-                ) : null}
               </div>
 
               {userHandEval && (
@@ -947,8 +963,6 @@ interface PlayerSeatWidgetProps {
   isActiveTurn: boolean;
   actionTimer: number;
   maxActionTimer: number;
-  showCards: boolean;
-  betPosition: 'bottom' | 'top' | 'left' | 'right';
 }
 
 const PlayerSeatWidget: React.FC<PlayerSeatWidgetProps> = ({
@@ -956,8 +970,6 @@ const PlayerSeatWidget: React.FC<PlayerSeatWidgetProps> = ({
   isActiveTurn,
   actionTimer,
   maxActionTimer,
-  showCards,
-  betPosition,
 }) => {
   const timerPercentage = (actionTimer / maxActionTimer) * 100;
 
@@ -997,11 +1009,6 @@ const PlayerSeatWidget: React.FC<PlayerSeatWidgetProps> = ({
         )}
 
         <p className="text-[10px] sm:text-[11px] font-bold text-white truncate max-w-[85px]">{player.name}</p>
-        <div className="flex items-center justify-center space-x-1 mt-0.5">
-          <PokerChip value={100} size="sm" color="gold" />
-          <p className="text-[10px] sm:text-[11px] text-[#f5d77f] font-mono font-extrabold">${player.stack.toLocaleString('pt-BR')}</p>
-        </div>
-
         {/* Última Ação do Jogador */}
         {player.lastAction && (
           <span className="text-[8px] sm:text-[9px] text-zinc-300 block truncate mt-0.5 font-medium">
@@ -1010,39 +1017,6 @@ const PlayerSeatWidget: React.FC<PlayerSeatWidgetProps> = ({
         )}
       </div>
 
-      {/* Cartas do Jogador */}
-      <div className="flex space-x-1 mt-0.5">
-        {showCards && player.cards.length === 2 ? (
-          <>
-            <CardView card={player.cards[0]} />
-            <CardView card={player.cards[1]} />
-          </>
-        ) : !player.hasFolded ? (
-          <>
-            <div className="w-4 h-6 sm:w-5 sm:h-7 rounded bg-gradient-to-br from-red-900 to-amber-950 border border-[#d4af37]/60 shadow" />
-            <div className="w-4 h-6 sm:w-5 sm:h-7 rounded bg-gradient-to-br from-red-900 to-amber-950 border border-[#d4af37]/60 shadow" />
-          </>
-        ) : (
-          <span className="text-[8px] sm:text-[9px] text-red-400 font-extrabold uppercase">FOLDED</span>
-        )}
-      </div>
-
-      {/* Resposta Visual das Fichas Apostadas na Mesa */}
-      {player.currentBet > 0 && (
-        <div
-          className={`absolute pointer-events-none z-10 ${
-            betPosition === 'bottom'
-              ? 'top-[112%] left-1/2 -translate-x-1/2'
-              : betPosition === 'top'
-              ? 'bottom-[112%] left-1/2 -translate-x-1/2'
-              : betPosition === 'left'
-              ? 'right-[112%] top-1/2 -translate-y-1/2'
-              : 'left-[112%] top-1/2 -translate-y-1/2'
-          }`}
-        >
-          <ChipStack amount={player.currentBet} size="sm" showLabel={true} />
-        </div>
-      )}
     </div>
   );
 };

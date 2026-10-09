@@ -114,6 +114,14 @@ Configuração padrão:
 
 As migrações em `backend/migrations` são carregadas automaticamente na primeira criação do volume do PostgreSQL.
 
+### Mesas compartilhadas em produção
+
+O backend usa o PostgreSQL como fonte compartilhada para o lobby, assentos e estado das partidas. Configure `DATABASE_URL` no serviço do Render apontando para o PostgreSQL acessível pela aplicação, defina `APP_ENV=production` e use a mesma base em todas as instâncias do backend. Sem conexão com o banco, o servidor não inicia; em produção, não há fallback para um banco local.
+
+O schema base (`backend/migrations/001_init.sql` a `003_*`) precisa existir no banco. Ao iniciar, o backend aplica a migration `004_shared_table_state.sql`, que adiciona os campos e a tabela para persistir o estado das mesas. Atualizações são propagadas entre instâncias pelo PostgreSQL (`LISTEN/NOTIFY`).
+
+Esta mudança compartilha lobby e partidas; autenticação/usuários e carteiras ainda são mantidos em memória. Para operar várias instâncias sem afinidade de sessão e com saldos consistentes, esses módulos também precisam ser migrados para armazenamento compartilhado.
+
 ### Backend (Go)
 ```bash
 cd backend

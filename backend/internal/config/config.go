@@ -25,19 +25,19 @@ func LoadConfig() *Config {
 		port = "8080"
 	}
 
+	env := os.Getenv("APP_ENV")
+	if env == "" {
+		env = "development"
+	}
+
 	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
+	if dbURL == "" && env == "development" && os.Getenv("RENDER") != "true" {
 		dbURL = "postgres://postgres:postgres@localhost:5432/poker_dos_amigos?sslmode=disable"
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "poker_dos_amigos_super_secret_jwt_key_2026"
-	}
-
-	env := os.Getenv("APP_ENV")
-	if env == "" {
-		env = "development"
 	}
 
 	frontendURL := os.Getenv("FRONTEND_URL")
