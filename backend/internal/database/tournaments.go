@@ -32,7 +32,7 @@ func (s *Store) ListTournaments(ctx context.Context, userID uuid.UUID) ([]models
 			COALESCE(pt.small_blind, t.small_blind), COALESCE(pt.big_blind, t.big_blind),
 			t.table_id, pt.creator_user_id, t.winner_user_id,
 			COALESCE(NULLIF(w.nome_completo, ''), NULLIF(w.username, ''), ''),
-			COALESCE(we.prize_cents, 0),
+			COALESCE(MAX(we.prize_cents), 0),
 			t.blind_level, t.started_at, t.finished_at,
 			COUNT(e.user_id)::INT,
 			COALESCE(MAX(e.status) FILTER (WHERE e.user_id = $1), ''),
