@@ -42,6 +42,9 @@ var persistentWalletMigration string
 //go:embed migrations/007_single_table_tournaments.sql
 var singleTableTournamentMigration string
 
+//go:embed migrations/008_player_game_history.sql
+var playerGameHistoryMigration string
+
 type Store struct {
 	pool *pgxpool.Pool
 	dsn  string
@@ -83,6 +86,9 @@ func (s *Store) ApplySharedTableMigration(ctx context.Context) error {
 	}
 	if _, err := tx.Exec(ctx, singleTableTournamentMigration); err != nil {
 		return fmt.Errorf("apply single-table tournament migration: %w", err)
+	}
+	if _, err := tx.Exec(ctx, playerGameHistoryMigration); err != nil {
+		return fmt.Errorf("apply player game history migration: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit database migrations: %w", err)
@@ -661,6 +667,7 @@ func (s *Store) JoinPlayer(
 	name string,
 	seatNumber int,
 	buyIn int64,
+	idempotencyKey string,
 ) (*engine.TableGame, models.PokerTable, error) {
 	tx, err := s.beginTableTransaction(ctx, tableID)
 	if err != nil {
@@ -699,6 +706,19 @@ func (s *Store) JoinPlayer(
 	if err := saveGameTx(ctx, tx, game); err != nil {
 		return nil, models.PokerTable{}, err
 	}
+	if table.Tipo == models.TableTypeCashGame {
+		var sessionID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO cash_game_sessions (user_id, table_id, table_name)
+			VALUES ($1, $2, $3)
+			RETURNING id
+		`, userID, tableID, table.Nome).Scan(&sessionID); err != nil {
+			return nil, models.PokerTable{}, fmt.Errorf("create cash game history: %w", err)
+		}
+		if err := insertCashGameSessionBuyIn(ctx, tx, sessionID, userID, tableID, buyIn, idempotencyKey); err != nil {
+			return nil, models.PokerTable{}, err
+		}
+	}
 	if err := notifyTx(ctx, tx, "tables"); err != nil {
 		return nil, models.PokerTable{}, err
 	}
@@ -709,6 +729,143 @@ func (s *Store) JoinPlayer(
 		return nil, models.PokerTable{}, fmt.Errorf("commit player table join: %w", err)
 	}
 	return game, table, nil
+}
+
+func (s *Store) AddCashGameStack(ctx context.Context, tableID, userID uuid.UUID, amount int64, idempotencyKey string) (*engine.TableGame, error) {
+	tx, err := s.beginTableTransaction(ctx, tableID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	table, err := getTableTx(ctx, tx, tableID)
+	if err != nil {
+		return nil, err
+	}
+	if table.Tipo != models.TableTypeCashGame {
+		return nil, errors.New("rebuys are only supported for cash games")
+	}
+	game, err := loadGameTx(ctx, tx, tableID, table.SmallBlind, table.BigBlind)
+	if err != nil {
+		return nil, err
+	}
+	if err := game.AddStack(userID, amount, idempotencyKey); err != nil {
+		return nil, err
+	}
+	var sessionID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM cash_game_sessions
+		WHERE user_id = $1 AND table_id = $2 AND finished_at IS NULL
+		FOR UPDATE
+	`, userID, tableID).Scan(&sessionID); err != nil {
+		return nil, fmt.Errorf("load active cash game history: %w", err)
+	}
+	if err := insertCashGameSessionBuyIn(ctx, tx, sessionID, userID, tableID, amount, idempotencyKey); err != nil {
+		return nil, err
+	}
+	if err := saveGameTx(ctx, tx, game); err != nil {
+		return nil, err
+	}
+	if err := notifyTx(ctx, tx, "game:"+tableID.String()); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit cash game rebuy and history: %w", err)
+	}
+	return game, nil
+}
+
+func insertCashGameSessionBuyIn(ctx context.Context, tx pgx.Tx, sessionID, userID, tableID uuid.UUID, chips int64, idempotencyKey string) error {
+	if idempotencyKey == "" {
+		return errors.New("cash game buy-in requires an idempotency key")
+	}
+	storedKey := walletIdempotencyKey(userID, idempotencyKey)
+	if len(storedKey) > 255 {
+		return errors.New("cash game buy-in idempotency key exceeds 255 bytes")
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO cash_game_session_buyins (idempotency_key, session_id, amount_cents)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (idempotency_key) DO NOTHING
+	`, storedKey, sessionID, finance.ChipsToMoney(chips)); err != nil {
+		return fmt.Errorf("record cash game buy-in history for user %s at table %s: %w", userID, tableID, err)
+	}
+	return nil
+}
+
+func (s *Store) FinishCashGameSession(ctx context.Context, tableID, userID uuid.UUID, payoutChips int64) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE cash_game_sessions
+		SET payout_cents = $1, finished_at = CURRENT_TIMESTAMP
+		WHERE table_id = $2 AND user_id = $3 AND finished_at IS NULL
+	`, finance.ChipsToMoney(payoutChips), tableID, userID)
+	if err != nil {
+		return fmt.Errorf("finish cash game history: %w", err)
+	}
+	if result.RowsAffected() > 1 {
+		return fmt.Errorf("multiple active cash game sessions for user %s at table %s", userID, tableID)
+	}
+	return nil
+}
+
+func (s *Store) ListPlayerGameHistory(ctx context.Context, userID uuid.UUID) ([]models.GameHistoryEntry, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, table_name, game_type, amount_invested, payout, won, started_at, finished_at
+		FROM (
+			SELECT
+				cgs.id,
+				cgs.table_name,
+				'cash_game'::TEXT AS game_type,
+				COALESCE(SUM(cgb.amount_cents), 0)::BIGINT AS amount_invested,
+				cgs.payout_cents::BIGINT AS payout,
+				NULL::BOOLEAN AS won,
+				cgs.started_at,
+				cgs.finished_at
+			FROM cash_game_sessions cgs
+			LEFT JOIN cash_game_session_buyins cgb ON cgb.session_id = cgs.id
+			WHERE cgs.user_id = $1
+			GROUP BY cgs.id
+
+			UNION ALL
+
+			SELECT
+				t.id,
+				t.nome,
+				'torneio'::TEXT AS game_type,
+				t.buy_in::BIGINT AS amount_invested,
+				te.prize_cents::BIGINT AS payout,
+				CASE WHEN t.status = 'concluido' THEN te.status = 'winner' ELSE NULL END AS won,
+				COALESCE(t.started_at, t.data_inicio) AS started_at,
+				t.finished_at
+			FROM tournament_entries te
+			JOIN tournaments t ON t.id = te.tournament_id
+			WHERE te.user_id = $1
+		) history
+		ORDER BY started_at DESC, id DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query player game history: %w", err)
+	}
+	defer rows.Close()
+
+	history := make([]models.GameHistoryEntry, 0)
+	for rows.Next() {
+		var entry models.GameHistoryEntry
+		var amountInvested, payout int64
+		if err := rows.Scan(
+			&entry.ID, &entry.TableName, &entry.GameType, &amountInvested, &payout,
+			&entry.Won, &entry.StartedAt, &entry.FinishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan player game history: %w", err)
+		}
+		entry.AmountInvestedChips = finance.MoneyToChips(amountInvested)
+		entry.PayoutChips = finance.MoneyToChips(payout)
+		history = append(history, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate player game history: %w", err)
+	}
+	return history, nil
 }
 
 func (s *Store) UpdateGame(

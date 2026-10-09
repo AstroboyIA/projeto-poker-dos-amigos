@@ -72,6 +72,17 @@ export interface Tournament {
   finished_at?: string;
 }
 
+export interface GameHistoryEntry {
+  id: string;
+  table_name: string;
+  game_type: 'cash_game' | 'torneio';
+  amount_invested_chips: number;
+  payout_chips: number;
+  won?: boolean | null;
+  started_at: string;
+  finished_at?: string | null;
+}
+
 export interface RankingEntry {
   posicao: number;
   user_id: string;

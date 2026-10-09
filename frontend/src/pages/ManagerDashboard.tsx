@@ -12,6 +12,7 @@ import {
   LogOut,
   Clock,
   ShieldCheck,
+  History,
 } from 'lucide-react';
 import { HeaderLogo } from '../components/common/HeaderLogo';
 import { useAuth } from '../context/AuthContext';
@@ -82,6 +83,14 @@ export const ManagerDashboard: React.FC = () => {
       icon: Layers,
       color: 'from-red-900 to-amber-950',
       action: () => navigate('/table/lobby'),
+    },
+    {
+      id: 'historico',
+      title: 'HISTÓRICO',
+      desc: 'Consulte suas partidas e resultados',
+      icon: History,
+      color: 'from-indigo-800 to-blue-950',
+      action: () => navigate('/player/history'),
     },
     {
       id: 'estatisticas',

@@ -1,4 +1,4 @@
-import type { AuthResponse, User, Tournament, RankingEntry, PokerTable, Announcement } from '../types';
+import type { AuthResponse, User, Tournament, RankingEntry, PokerTable, Announcement, GameHistoryEntry } from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') + '/api';
 
@@ -49,6 +49,15 @@ export const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao buscar torneios');
+    return data.data || [];
+  },
+
+  async getPlayerGameHistory(token: string): Promise<GameHistoryEntry[]> {
+    const res = await fetch(`${API_BASE}/player/history`, {
+      headers: { Authorization: ['Bearer', token].join(' ') },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao buscar histórico');
     return data.data || [];
   },
 

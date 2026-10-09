@@ -92,6 +92,7 @@ func main() {
 		r.Post("/api/tournaments/{tournamentID}/register", tournamentHandler.Register)
 		r.Post("/api/tournaments/{tournamentID}/leave", tournamentHandler.Leave)
 		r.Post("/api/tournaments/{tournamentID}/start", tournamentHandler.Start)
+		r.Get("/api/player/history", modulesHandler.GetPlayerGameHistory)
 		r.Get("/api/rankings", modulesHandler.GetRankings)
 		r.Get("/api/tables", modulesHandler.GetTables)
 		r.Post("/api/tables", modulesHandler.CreateTable)

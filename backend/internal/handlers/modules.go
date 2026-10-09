@@ -99,6 +99,25 @@ func (h *ModulesHandler) GetRankings(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, rankings)
 }
 
+func (h *ModulesHandler) GetPlayerGameHistory(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		response.Error(w, http.StatusServiceUnavailable, "Histórico indisponível")
+		return
+	}
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	history, err := h.store.ListPlayerGameHistory(r.Context(), claims.UserID)
+	if err != nil {
+		log.Printf("Falha ao carregar histórico do usuário %s: %v", claims.UserID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar histórico")
+		return
+	}
+	response.JSON(w, http.StatusOK, history)
+}
+
 // Lista de Mesas / Cash Games
 func (h *ModulesHandler) GetTables(w http.ResponseWriter, r *http.Request) {
 	if h.store != nil {
@@ -326,6 +345,11 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusConflict, "Jogador não está sentado nesta mesa")
 			return
 		}
+		if err := h.store.FinishCashGameSession(r.Context(), tableID, claims.UserID, stack); err != nil {
+			log.Printf("Falha ao finalizar histórico de cash game do usuário %s: %v", claims.UserID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao salvar histórico da partida")
+			return
+		}
 		if !h.releaseSeat(req.TableID, req.SeatNumber) {
 			response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 			return
@@ -467,6 +491,11 @@ func (h *ModulesHandler) ReleaseSeat(tableID, userID uuid.UUID, seatNumber int, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if h.store != nil {
+		if err := h.store.FinishCashGameSession(ctx, tableID, userID, stack); err != nil {
+			log.Printf("Falha ao finalizar histórico de cash game do usuário %s após desconexão: %v", userID, err)
+		}
+	}
 	if _, err := h.wallets.EnsureWallet(ctx, userID, 0); err != nil {
 		log.Printf("Falha ao carregar carteira do usuário %s ao sair da mesa: %v", userID, err)
 		return
@@ -617,7 +646,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 			if playerName == "" {
 				playerName = user.Username
 			}
-			game, _, updateErr := h.store.JoinPlayer(r.Context(), tableID, user.ID, playerName, req.SeatNumber, req.Amount)
+			game, _, updateErr := h.store.JoinPlayer(r.Context(), tableID, user.ID, playerName, req.SeatNumber, req.Amount, key)
 			if updateErr != nil {
 				if _, refundErr := h.wallets.RefundBuyIn(r.Context(), user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
 					log.Printf("Falha ao estornar buy-in após erro de persistência do jogo para %s: %v", user.ID, refundErr)
@@ -809,9 +838,11 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 	}
 	var table *engine.TableGame
 	if h.store != nil {
-		table, err = h.hub.UpdateGame(tableID, func(game *engine.TableGame) error {
-			return game.AddStack(user.ID, req.Amount, key)
-		})
+		table, err = h.store.AddCashGameStack(r.Context(), tableID, user.ID, req.Amount, key)
+		if err == nil {
+			h.hub.GameService().SetTable(table)
+			h.hub.TableChanged(tableID, table)
+		}
 	} else {
 		var exists bool
 		table, exists = h.hub.GameService().GetTable(tableID)
