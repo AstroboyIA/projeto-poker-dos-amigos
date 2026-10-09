@@ -124,7 +124,7 @@ export const SeatSelectionPage: React.FC = () => {
             <div>
               <p className="text-xs text-zinc-400">Saldo Disponível:</p>
               <p className="text-sm font-bold text-[#f5d77f] font-mono">
-                ${user?.saldo_fichas?.toLocaleString('pt-BR') || '10.000'} Fichas
+                ${user?.saldo_fichas?.toLocaleString('pt-BR') || '1.000.000'} Fichas
               </p>
             </div>
             <div className="w-9 h-9 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center text-[#f5d77f] font-bold text-sm">

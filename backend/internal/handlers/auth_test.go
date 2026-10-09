@@ -14,6 +14,11 @@ import (
 func TestUsernameOnlyRegistrationAndLogin(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret")
 	handler := NewAuthHandler(tokenManager)
+	for _, username := range []string{"jonatas", "felipe", "jogador"} {
+		if user := handler.users[username]; user.SaldoFichas != initialPlayerChips {
+			t.Errorf("saldo inicial de %s = %d, esperado %d", username, user.SaldoFichas, initialPlayerChips)
+		}
+	}
 
 	missingTermsRequest := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(`{"username":"newplayer","senha":"secret123"}`))
 	missingTermsResponse := httptest.NewRecorder()
@@ -37,6 +42,9 @@ func TestUsernameOnlyRegistrationAndLogin(t *testing.T) {
 	}
 	if registerResult.Data.User.Username != "newplayer" || registerResult.Data.User.Email != "" {
 		t.Fatalf("registered user = %+v, expected username only", registerResult.Data.User)
+	}
+	if registerResult.Data.User.SaldoFichas != initialPlayerChips {
+		t.Errorf("saldo do novo usuário = %d, esperado %d", registerResult.Data.User.SaldoFichas, initialPlayerChips)
 	}
 
 	meRequest := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)

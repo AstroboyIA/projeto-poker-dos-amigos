@@ -13,6 +13,8 @@ import (
 	"github.com/walissonpaulo/poker-dos-amigos-backend/pkg/response"
 )
 
+const initialPlayerChips int64 = 1_000_000
+
 type AuthHandler struct {
 	tokenManager *auth.TokenManager
 	users        map[string]*models.User // Em memória com fallback / demo
@@ -41,7 +43,7 @@ func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
 		AceitouTermo: true,
 		Role:         models.RoleAdminGerente,
 		Status:       models.StatusAtivo,
-		SaldoFichas:  50000,
+		SaldoFichas:  initialPlayerChips,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -59,7 +61,7 @@ func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
 		AceitouTermo: true,
 		Role:         models.RoleAdminGerente,
 		Status:       models.StatusAtivo,
-		SaldoFichas:  50000,
+		SaldoFichas:  initialPlayerChips,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -79,7 +81,7 @@ func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
 		AceitouTermo: true,
 		Role:         models.RoleJogador,
 		Status:       models.StatusAtivo,
-		SaldoFichas:  10000,
+		SaldoFichas:  initialPlayerChips,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -201,7 +203,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		AceitouTermo: req.AceitouTermo,
 		Role:         models.RoleJogador,
 		Status:       models.StatusAtivo,
-		SaldoFichas:  1000, // Bônus inicial de boas-vindas
+		SaldoFichas:  initialPlayerChips,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}

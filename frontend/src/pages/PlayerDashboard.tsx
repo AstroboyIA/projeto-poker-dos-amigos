@@ -178,7 +178,7 @@ export const PlayerDashboard: React.FC = () => {
               Bem-vindo, {user?.nome_completo || user?.username || 'Jogador'}!
             </h4>
             <p className="text-xs text-zinc-400">
-              Saldo: <span className="text-[#f5d77f] font-bold">{user?.saldo_fichas || 1000} fichas</span> | Acesse o módulo desejado
+              Saldo: <span className="text-[#f5d77f] font-bold">{user?.saldo_fichas ?? 1_000_000} fichas</span> | Acesse o módulo desejado
             </p>
           </div>
         </div>
