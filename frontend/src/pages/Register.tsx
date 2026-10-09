@@ -99,7 +99,7 @@ export const RegisterPage: React.FC = () => {
         )}
 
         <form onSubmit={handleRegister} className="space-y-3.5">
-          {modoRapido ? (
+          {modoRapido && (
             <>
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
@@ -116,23 +116,26 @@ export const RegisterPage: React.FC = () => {
                   className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
-                  <Lock size={13} className="text-[#d4af37]" />
-                  SENHA
-                </label>
-                <input
-                  type="password"
-                  value={senha}
-                  onChange={(e) => setSenha(e.target.value)}
-                  placeholder="Crie uma senha"
-                  autoComplete="new-password"
-                  required
-                  className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
-                />
-              </div>
             </>
-          ) : (
+          )}
+
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
+              <Lock size={13} className="text-[#d4af37]" />
+              SENHA
+            </label>
+            <input
+              type="password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder="Crie uma senha"
+              autoComplete="new-password"
+              required
+              className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
+            />
+          </div>
+
+          {!modoRapido && (
             <>
           {/* Nome Completo */}
           <div className="space-y-1">
@@ -145,23 +148,6 @@ export const RegisterPage: React.FC = () => {
               value={nomeCompleto}
               onChange={(e) => setNomeCompleto(e.target.value)}
               placeholder="Digite seu nome completo"
-              required
-              className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
-            />
-          </div>
-
-          {/* Senha */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
-              <Lock size={13} className="text-[#d4af37]" />
-              SENHA
-            </label>
-            <input
-              type="password"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              placeholder="Crie uma senha"
-              autoComplete="new-password"
               required
               className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
             />
@@ -230,7 +216,6 @@ export const RegisterPage: React.FC = () => {
               className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
             />
           </div>
-
           </>
           )}
 

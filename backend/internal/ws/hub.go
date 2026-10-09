@@ -71,28 +71,30 @@ type Client struct {
 }
 
 type Hub struct {
-	clients     map[*Client]bool
-	tables      map[uuid.UUID]map[*Client]bool
-	broadcast   chan []byte
-	register    chan *Client
-	unregister  chan *Client
-	gameService *engine.GameService
-	releaseSeat func(uuid.UUID, int)
-	turnTimers  map[uuid.UUID]uint64
-	turnTimeout time.Duration
-	mu          sync.RWMutex
+	clients       map[*Client]bool
+	tables        map[uuid.UUID]map[*Client]bool
+	broadcast     chan []byte
+	register      chan *Client
+	unregister    chan *Client
+	gameService   *engine.GameService
+	releaseSeat   func(uuid.UUID, int)
+	turnTimers    map[uuid.UUID]uint64
+	turnTimeout   time.Duration
+	showdownDelay time.Duration
+	mu            sync.RWMutex
 }
 
 func NewHub(gameService *engine.GameService) *Hub {
 	return &Hub{
-		clients:     make(map[*Client]bool),
-		tables:      make(map[uuid.UUID]map[*Client]bool),
-		broadcast:   make(chan []byte),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
-		gameService: gameService,
-		turnTimers:  make(map[uuid.UUID]uint64),
-		turnTimeout: 20 * time.Second,
+		clients:       make(map[*Client]bool),
+		tables:        make(map[uuid.UUID]map[*Client]bool),
+		broadcast:     make(chan []byte),
+		register:      make(chan *Client),
+		unregister:    make(chan *Client),
+		gameService:   gameService,
+		turnTimers:    make(map[uuid.UUID]uint64),
+		turnTimeout:   20 * time.Second,
+		showdownDelay: 12 * time.Second,
 	}
 }
 
@@ -428,12 +430,9 @@ func (c *Client) handleLeaveTable() {
 
 func (h *Hub) handlePlayerDeparture(tableID uuid.UUID, table *engine.TableGame) {
 	state := table.GetPublicState()
-	if state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver {
-		_ = table.StartNewHand()
-	}
 	h.broadcastCurrentTableState(tableID, table)
 	h.scheduleTurnTimeout(tableID, table)
-	if table.GetPublicState().Stage == engine.StageShowdown {
+	if state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver {
 		h.scheduleNextHand(tableID, table)
 	}
 }
@@ -508,7 +507,7 @@ func (h *Hub) scheduleTurnTimeout(tableID uuid.UUID, table *engine.TableGame) {
 
 func (h *Hub) scheduleNextHand(tableID uuid.UUID, table *engine.TableGame) {
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(h.showdownDelay)
 
 		h.mu.RLock()
 		_, tableConnected := h.tables[tableID]
@@ -528,7 +527,8 @@ func (h *Hub) scheduleNextHand(tableID uuid.UUID, table *engine.TableGame) {
 func (h *Hub) TableChanged(tableID uuid.UUID, table *engine.TableGame) {
 	h.broadcastCurrentTableState(tableID, table)
 	h.scheduleTurnTimeout(tableID, table)
-	if table.GetPublicState().Stage == engine.StageShowdown {
+	state := table.GetPublicState()
+	if state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver {
 		h.scheduleNextHand(tableID, table)
 	}
 }

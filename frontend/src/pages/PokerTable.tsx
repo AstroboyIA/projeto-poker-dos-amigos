@@ -414,18 +414,46 @@ export const PokerTablePage: React.FC = () => {
     ? evaluate7Cards([...effectiveUserCards, ...communityCards])
     : null;
 
-  // Mapeamento das 9 Posições da Mesa
+  // Posição das apostas em relação a cada assento.
   const seatPositions = [
-    { top: '2%', left: '20%', transform: '-translate-x-1/2', betPos: 'bottom' as const }, // Assento 1
-    { top: '2%', left: '50%', transform: '-translate-x-1/2', betPos: 'bottom' as const }, // Assento 2
-    { top: '2%', right: '20%', transform: 'translate-x-1/2', betPos: 'bottom' as const },  // Assento 3
-    { top: '32%', right: '2%', transform: '-translate-y-1/2', betPos: 'left' as const },    // Assento 4
-    { top: '68%', right: '2%', transform: '-translate-y-1/2', betPos: 'left' as const },    // Assento 5
-    { bottom: '2%', right: '32%', transform: 'translate-x-1/2', betPos: 'top' as const },  // Assento 6
-    { bottom: '2%', left: '32%', transform: '-translate-x-1/2', betPos: 'top' as const },   // Assento 7
-    { top: '68%', left: '2%', transform: '-translate-y-1/2', betPos: 'right' as const },    // Assento 8
-    { top: '32%', left: '2%', transform: '-translate-y-1/2', betPos: 'right' as const },    // Assento 9
+    { betPos: 'bottom' as const },
+    { betPos: 'bottom' as const },
+    { betPos: 'bottom' as const },
+    { betPos: 'left' as const },
+    { betPos: 'left' as const },
+    { betPos: 'top' as const },
+    { betPos: 'top' as const },
+    { betPos: 'right' as const },
+    { betPos: 'right' as const },
   ];
+
+  const renderSeatGroup = (seatNumbers: number[], className: string) => (
+    <div className={className}>
+      {players
+        .filter((player) => seatNumbers.includes(player.seatNumber))
+        .map((player) => {
+          const idx = players.indexOf(player);
+          const isTurn =
+            currentTurnIdx === idx &&
+            stage !== 'WAITING' &&
+            stage !== 'DEALING' &&
+            stage !== 'SHOWDOWN' &&
+            stage !== 'HAND_OVER';
+
+          return (
+            <PlayerSeatWidget
+              key={player.id}
+              player={player}
+              isActiveTurn={isTurn}
+              actionTimer={actionTimer}
+              maxActionTimer={MAX_ACTION_TIME}
+              showCards={stage === 'SHOWDOWN' && !player.hasFolded}
+              betPosition={seatPositions[player.seatNumber - 1]?.betPos || 'bottom'}
+            />
+          );
+        })}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#07090e] text-white flex flex-col justify-between p-2 sm:p-4 select-none">
@@ -594,9 +622,22 @@ export const PokerTablePage: React.FC = () => {
       )}
 
       {/* 2. Feltro de Poker Central com 9 Jogadores e Fichas 3D Estáticas */}
-      <div className="relative my-2 flex-grow flex items-center justify-center">
+      <div className="my-2 grid w-full max-w-6xl flex-grow grid-cols-3 items-center justify-items-center gap-x-1 gap-y-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,5fr)_minmax(0,1fr)] lg:gap-x-3 lg:gap-y-3">
+        {renderSeatGroup(
+          [1, 2, 3],
+          'col-span-3 row-start-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-start-2',
+        )}
+        {renderSeatGroup(
+          [8, 9],
+          'col-start-1 row-start-2 flex flex-col items-center justify-center gap-3 lg:row-start-2',
+        )}
+        {renderSeatGroup(
+          [4, 5],
+          'col-start-3 row-start-2 flex flex-col items-center justify-center gap-3 lg:row-start-2',
+        )}
+
         {/* Mesa Oval de Feltro 9-Max */}
-        <div className="w-full max-w-5xl h-[430px] sm:h-[490px] rounded-[200px] sm:rounded-[240px] poker-felt border-[14px] sm:border-[18px] border-[#181109] shadow-[0_0_50px_rgba(0,0,0,0.9),inset_0_0_60px_rgba(0,0,0,0.8)] relative flex flex-col items-center justify-center p-4">
+        <div className="col-span-3 row-start-3 flex h-[430px] w-full max-w-5xl flex-col items-center justify-center rounded-[200px] border-[14px] border-[#181109] poker-felt p-4 shadow-[0_0_50px_rgba(0,0,0,0.9),inset_0_0_60px_rgba(0,0,0,0.8)] sm:h-[490px] sm:rounded-[240px] sm:border-[18px] lg:col-span-1 lg:col-start-2 lg:row-start-2">
           {/* Logo da Mesa */}
           <div className="text-center opacity-30 select-none pointer-events-none mb-1">
             <div className="text-[#d4af37] text-sm sm:text-base font-black tracking-widest uppercase">
@@ -674,40 +715,11 @@ export const PokerTablePage: React.FC = () => {
             </div>
           )}
 
-          {/* Renderização dos jogadores sentados ao redor da mesa com Temporizador de 20s */}
-          {players.map((p, idx) => {
-            const pos = seatPositions[p.seatNumber - 1] || seatPositions[0];
-            const isTurn =
-              currentTurnIdx === idx &&
-              stage !== 'WAITING' &&
-              stage !== 'DEALING' &&
-              stage !== 'SHOWDOWN' &&
-              stage !== 'HAND_OVER';
-            const showCards = stage === 'SHOWDOWN' && !p.hasFolded;
-
-            const posStyle: React.CSSProperties = {
-              position: 'absolute',
-              top: pos.top,
-              bottom: pos.bottom,
-              left: pos.left,
-              right: pos.right,
-              transform: pos.transform,
-            };
-
-            return (
-              <div key={p.id} style={posStyle}>
-                <PlayerSeatWidget
-                  player={p}
-                  isActiveTurn={isTurn}
-                  actionTimer={actionTimer}
-                  maxActionTimer={MAX_ACTION_TIME}
-                  showCards={showCards}
-                  betPosition={pos.betPos}
-                />
-              </div>
-            );
-          })}
         </div>
+        {renderSeatGroup(
+          [6, 7],
+          'col-span-3 row-start-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-start-2 lg:row-start-3',
+        )}
       </div>
 
       {/* 3. Painel Inferior de Fichas e Ações do Jogador com Action Clock 20s */}

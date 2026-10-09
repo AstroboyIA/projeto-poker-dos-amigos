@@ -579,10 +579,6 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusConflict, err.Error())
 		return
 	}
-	state := table.GetPublicState()
-	if state.Stage == "SHOWDOWN" || state.Stage == "HAND_OVER" {
-		_ = table.StartNewHand()
-	}
 	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
 	user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
 	h.hub.TableChanged(tableID, table)
