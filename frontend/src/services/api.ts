@@ -1,4 +1,4 @@
-import type { AuthResponse, User, Tournament, RankingEntry, PokerTable, Announcement, GameHistoryEntry } from '../types';
+import type { AuthResponse, User, Tournament, TournamentRoom, RankingEntry, PokerTable, Announcement, GameHistoryEntry } from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') + '/api';
 
@@ -83,18 +83,44 @@ export const api = {
     return data.data;
   },
 
-  async registerTournament(token: string, tournamentId: string): Promise<{
+  async getTournamentRoom(token: string, tournamentId: string): Promise<TournamentRoom> {
+    const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/room`, {
+      headers: { Authorization: ['Bearer', token].join(' ') },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao carregar sala do torneio');
+    return data.data;
+  },
+
+  async registerTournament(token: string, tournamentId: string, seatNumber: number): Promise<{
     tournament: Tournament;
     seat_number: number;
     table_id: string;
   }> {
     const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/register`, {
       method: 'POST',
-      headers: { Authorization: ['Bearer', token].join(' ') },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+      },
+      body: JSON.stringify({ seat_number: seatNumber }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha na inscrição do torneio');
     return data.data;
+  },
+
+  async changeTournamentSeat(token: string, tournamentId: string, seatNumber: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/seat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+      },
+      body: JSON.stringify({ seat_number: seatNumber }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao alterar assento');
   },
 
   async leaveTournament(token: string, tournamentId: string): Promise<void> {

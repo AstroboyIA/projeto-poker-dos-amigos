@@ -72,6 +72,28 @@ export interface Tournament {
   finished_at?: string;
 }
 
+export interface TournamentRoom {
+  id: string;
+  name: string;
+  status: string;
+  table_id: string;
+  max_seats: number;
+  buy_in: number;
+  starting_stack: number;
+  small_blind: number;
+  big_blind: number;
+  creator_user_id: string;
+  current_user_entry: boolean;
+  current_user_seat?: number;
+  current_user_status?: string;
+  seats: Array<{
+    seat_number: number;
+    user_id: string;
+    player_name: string;
+    status: string;
+  }>;
+}
+
 export interface GameHistoryEntry {
   id: string;
   table_name: string;

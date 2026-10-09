@@ -121,6 +121,36 @@ func TestJoinPlayerRejectsOccupiedSeatWithoutChangingTable(t *testing.T) {
 	}
 }
 
+func TestMovePlayerSeatOnlyBeforeStartAndToFreeSeat(t *testing.T) {
+	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
+	firstUser := uuid.New()
+	secondUser := uuid.New()
+	if err := table.JoinPlayer(firstUser, "Primeiro", 1, 2000); err != nil {
+		t.Fatalf("primeiro jogador não entrou: %v", err)
+	}
+	if err := table.JoinPlayer(secondUser, "Segundo", 2, 2000); err != nil {
+		t.Fatalf("segundo jogador não entrou: %v", err)
+	}
+
+	if err := table.MovePlayerSeat(firstUser, 2); err == nil {
+		t.Fatal("esperava erro ao mover jogador para assento ocupado")
+	}
+	if err := table.MovePlayerSeat(firstUser, 4); err != nil {
+		t.Fatalf("não foi possível mover jogador para assento livre: %v", err)
+	}
+	state := table.GetPublicState()
+	if state.Players[1].UserID == nil || *state.Players[1].UserID != firstUser || state.Players[1].SeatNumber != 4 {
+		t.Fatalf("assento do jogador não foi atualizado: %+v", state.Players)
+	}
+
+	if err := table.Start(); err != nil {
+		t.Fatalf("mesa não iniciou: %v", err)
+	}
+	if err := table.MovePlayerSeat(firstUser, 5); err == nil {
+		t.Fatal("esperava erro ao mudar assento após iniciar a partida")
+	}
+}
+
 func TestSecondPlayerCanActAfterFirstPlayer(t *testing.T) {
 	table := engine.NewGameService().GetOrCreateTable(uuid.New(), 25, 50)
 	userID := uuid.New()

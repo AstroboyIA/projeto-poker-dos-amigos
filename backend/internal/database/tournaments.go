@@ -23,6 +23,7 @@ var (
 	ErrTournamentForbidden = errors.New("only the tournament creator can start it")
 	ErrTournamentEntry     = errors.New("player is not registered in tournament")
 	ErrTournamentSuccessor = errors.New("another registered player is required to transfer tournament ownership")
+	ErrTournamentSeat      = errors.New("tournament seat is unavailable")
 )
 
 func (s *Store) ListTournaments(ctx context.Context, userID uuid.UUID) ([]models.Tournament, error) {
@@ -137,7 +138,7 @@ func (s *Store) CreateTournament(ctx context.Context, tournament models.Tourname
 	return tournament, nil
 }
 
-func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uuid.UUID, playerName string) (models.Tournament, int, error) {
+func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uuid.UUID, playerName string, requestedSeat int) (models.Tournament, int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.Tournament{}, 0, fmt.Errorf("begin tournament registration: %w", err)
@@ -171,6 +172,9 @@ func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uui
 	if tournament.Inscritos >= tournament.MaxInscritos {
 		return models.Tournament{}, 0, ErrTournamentFull
 	}
+	if requestedSeat < 0 || requestedSeat > tournament.MaxInscritos {
+		return models.Tournament{}, 0, ErrTournamentSeat
+	}
 
 	var tableID uuid.UUID
 	if tournament.TableID == nil {
@@ -182,7 +186,11 @@ func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uui
 		return models.Tournament{}, 0, fmt.Errorf("load tournament table: %w", err)
 	}
 	seat := 0
-	for candidate := 1; candidate <= tournament.MaxInscritos; candidate++ {
+	firstSeat, lastSeat := 1, tournament.MaxInscritos
+	if requestedSeat > 0 {
+		firstSeat, lastSeat = requestedSeat, requestedSeat
+	}
+	for candidate := firstSeat; candidate <= lastSeat; candidate++ {
 		occupied := false
 		for _, seatNumber := range table.OccupiedSeats {
 			if seatNumber == candidate {
@@ -196,6 +204,9 @@ func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uui
 		}
 	}
 	if seat == 0 {
+		if requestedSeat > 0 {
+			return models.Tournament{}, 0, ErrTournamentSeat
+		}
 		return models.Tournament{}, 0, ErrTournamentFull
 	}
 
@@ -292,6 +303,174 @@ func (s *Store) RegisterTournament(ctx context.Context, tournamentID, userID uui
 		return models.Tournament{}, 0, fmt.Errorf("commit tournament registration: %w", err)
 	}
 	return tournament, seat, nil
+}
+
+func (s *Store) GetTournamentRoom(ctx context.Context, tournamentID, userID uuid.UUID) (models.TournamentRoom, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.id, t.nome, t.status, t.max_inscritos, t.buy_in, t.starting_stack,
+			COALESCE(pt.small_blind, t.small_blind), COALESCE(pt.big_blind, t.big_blind),
+			t.table_id, pt.creator_user_id,
+			e.seat_number, e.user_id,
+			COALESCE(NULLIF(u.nome_completo, ''), NULLIF(u.username, ''), ''),
+			COALESCE(e.status, '')
+		FROM tournaments t
+		JOIN poker_tables pt ON pt.id = t.table_id
+		LEFT JOIN tournament_entries e ON e.tournament_id = t.id
+		LEFT JOIN users u ON u.id = e.user_id
+		WHERE t.id = $1
+		ORDER BY e.seat_number
+	`, tournamentID)
+	if err != nil {
+		return models.TournamentRoom{}, fmt.Errorf("query tournament room: %w", err)
+	}
+	defer rows.Close()
+
+	var room models.TournamentRoom
+	room.Seats = make([]models.TournamentSeat, 0)
+	found := false
+	for rows.Next() {
+		var seatNumber *int
+		var playerID *uuid.UUID
+		var playerName, status string
+		if err := rows.Scan(
+			&room.ID, &room.Name, &room.Status, &room.MaxSeats, &room.BuyIn, &room.StartingStack,
+			&room.SmallBlind, &room.BigBlind, &room.TableID, &room.CreatorUserID,
+			&seatNumber, &playerID, &playerName, &status,
+		); err != nil {
+			return models.TournamentRoom{}, fmt.Errorf("scan tournament room: %w", err)
+		}
+		found = true
+		if seatNumber == nil || playerID == nil {
+			continue
+		}
+		room.Seats = append(room.Seats, models.TournamentSeat{
+			SeatNumber: *seatNumber,
+			UserID:     *playerID,
+			PlayerName: playerName,
+			Status:     status,
+		})
+		if *playerID == userID {
+			room.CurrentUserEntry = true
+			room.CurrentUserSeat = seatNumber
+			room.CurrentUserStatus = status
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return models.TournamentRoom{}, fmt.Errorf("iterate tournament room: %w", err)
+	}
+	if !found {
+		return models.TournamentRoom{}, ErrTournamentNotFound
+	}
+	return room, nil
+}
+
+func (s *Store) MoveTournamentSeat(ctx context.Context, tournamentID, userID uuid.UUID, requestedSeat int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tournament seat change: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tournament, err := getTournamentTx(ctx, tx, tournamentID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTournamentNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load tournament for seat change: %w", err)
+	}
+	if tournament.Status != "aberto" {
+		return ErrTournamentClosed
+	}
+	if requestedSeat < 1 || requestedSeat > tournament.MaxInscritos {
+		return ErrTournamentSeat
+	}
+	if tournament.TableID == nil {
+		return errors.New("tournament table is not configured")
+	}
+
+	var oldSeat int
+	err = tx.QueryRow(ctx, `
+		SELECT seat_number FROM tournament_entries
+		WHERE tournament_id = $1 AND user_id = $2 AND status = 'registered'
+		FOR UPDATE
+	`, tournamentID, userID).Scan(&oldSeat)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTournamentEntry
+	}
+	if err != nil {
+		return fmt.Errorf("load tournament entry for seat change: %w", err)
+	}
+	if oldSeat == requestedSeat {
+		return tx.Commit(ctx)
+	}
+
+	table, err := getTableTx(ctx, tx, *tournament.TableID)
+	if err != nil {
+		return fmt.Errorf("load tournament table for seat change: %w", err)
+	}
+	var seatTaken bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tournament_entries
+			WHERE tournament_id = $1 AND seat_number = $2 AND user_id <> $3
+		)
+	`, tournamentID, requestedSeat, userID).Scan(&seatTaken); err != nil {
+		return fmt.Errorf("check tournament seat availability: %w", err)
+	}
+	if seatTaken {
+		return ErrTournamentSeat
+	}
+	game, err := loadGameTx(ctx, tx, *tournament.TableID, tournament.SmallBlind, tournament.BigBlind)
+	if err != nil {
+		return err
+	}
+	if err := game.MovePlayerSeat(userID, requestedSeat); err != nil {
+		return fmt.Errorf("move player in tournament game: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tournament_entries SET seat_number = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE tournament_id = $2 AND user_id = $3
+	`, requestedSeat, tournamentID, userID); err != nil {
+		return fmt.Errorf("update tournament entry seat: %w", err)
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT seat_number FROM tournament_entries
+		WHERE tournament_id = $1 ORDER BY seat_number
+	`, tournamentID)
+	if err != nil {
+		return fmt.Errorf("list tournament seats after change: %w", err)
+	}
+	table.OccupiedSeats = make([]int, 0, tournament.Inscritos)
+	for rows.Next() {
+		var seat int
+		if err := rows.Scan(&seat); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan tournament seat after change: %w", err)
+		}
+		table.OccupiedSeats = append(table.OccupiedSeats, seat)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate tournament seats after change: %w", err)
+	}
+	rows.Close()
+	table.UpdatedAt = time.Now()
+	if err := updateSeatsTx(ctx, tx, table); err != nil {
+		return err
+	}
+	if err := saveGameTx(ctx, tx, game); err != nil {
+		return err
+	}
+	if err := notifyTx(ctx, tx, "tables"); err != nil {
+		return err
+	}
+	if err := notifyTx(ctx, tx, "game:"+tournament.TableID.String()); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tournament seat change: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) LeaveTournament(ctx context.Context, tournamentID, userID uuid.UUID) error {

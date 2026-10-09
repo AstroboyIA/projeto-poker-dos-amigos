@@ -33,6 +33,30 @@ type Tournament struct {
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
+type TournamentRoom struct {
+	ID                uuid.UUID        `json:"id"`
+	Name              string           `json:"name"`
+	Status            string           `json:"status"`
+	TableID           uuid.UUID        `json:"table_id"`
+	MaxSeats          int              `json:"max_seats"`
+	BuyIn             int64            `json:"buy_in"`
+	StartingStack     int64            `json:"starting_stack"`
+	SmallBlind        int64            `json:"small_blind"`
+	BigBlind          int64            `json:"big_blind"`
+	CreatorUserID     uuid.UUID        `json:"creator_user_id"`
+	CurrentUserEntry  bool             `json:"current_user_entry"`
+	CurrentUserSeat   *int             `json:"current_user_seat,omitempty"`
+	CurrentUserStatus string           `json:"current_user_status,omitempty"`
+	Seats             []TournamentSeat `json:"seats"`
+}
+
+type TournamentSeat struct {
+	SeatNumber int       `json:"seat_number"`
+	UserID     uuid.UUID `json:"user_id"`
+	PlayerName string    `json:"player_name"`
+	Status     string    `json:"status"`
+}
+
 // Ranking
 type RankingEntry struct {
 	Posicao     int       `json:"posicao"`

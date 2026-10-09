@@ -89,7 +89,9 @@ func main() {
 		// Módulos
 		r.Get("/api/tournaments", tournamentHandler.GetTournaments)
 		r.Post("/api/tournaments", tournamentHandler.CreateTournament)
+		r.Get("/api/tournaments/{tournamentID}/room", tournamentHandler.GetRoom)
 		r.Post("/api/tournaments/{tournamentID}/register", tournamentHandler.Register)
+		r.Post("/api/tournaments/{tournamentID}/seat", tournamentHandler.ChangeSeat)
 		r.Post("/api/tournaments/{tournamentID}/leave", tournamentHandler.Leave)
 		r.Post("/api/tournaments/{tournamentID}/start", tournamentHandler.Start)
 		r.Get("/api/player/history", modulesHandler.GetPlayerGameHistory)

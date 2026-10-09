@@ -34,19 +34,8 @@ export const TournamentLobbyPage: React.FC = () => {
     return () => window.clearInterval(interval);
   }, [loadTournaments]);
 
-  const register = async (tournament: Tournament) => {
-    if (!token || busyID) return;
-    setBusyID(tournament.id);
-    setError(null);
-    try {
-      await api.registerTournament(token, tournament.id);
-      await refreshUser();
-      await loadTournaments();
-    } catch (registerError) {
-      setError(registerError instanceof Error ? registerError.message : 'Falha na inscrição');
-    } finally {
-      setBusyID(null);
-    }
+  const openRoom = (tournament: Tournament) => {
+    navigate(`/tournaments/${tournament.id}/room`);
   };
 
   const start = async (tournament: Tournament) => {
@@ -143,14 +132,19 @@ export const TournamentLobbyPage: React.FC = () => {
               {tournament.status === 'aberto' && (
                 <div className="flex flex-wrap gap-2">
                   {tournament.current_user_entry ? (
-                    <span className="flex-1 rounded-lg border border-emerald-500/40 bg-emerald-950/50 py-2 text-center text-xs font-bold text-emerald-200">Inscrição confirmada · assento #{tournament.current_user_seat}</span>
+                    <button
+                      onClick={() => openRoom(tournament)}
+                      className="flex-1 rounded-lg border border-emerald-500/40 bg-emerald-950/50 py-2 text-center text-xs font-bold text-emerald-200"
+                    >
+                      Sala aberta · assento #{tournament.current_user_seat} · mudar assento
+                    </button>
                   ) : (
                     <button
-                      onClick={() => void register(tournament)}
-                      disabled={busyID !== null || tournament.inscritos >= tournament.max_inscritos}
+                      onClick={() => openRoom(tournament)}
+                      disabled={tournament.inscritos >= tournament.max_inscritos}
                       className="flex-1 rounded-lg bg-emerald-700 py-2 text-xs font-extrabold text-white disabled:opacity-50"
                     >
-                      {busyID === tournament.id ? 'Processando...' : `Inscrever-se · ${tournament.buy_in.toLocaleString('pt-BR')} fichas`}
+                      Escolher assento e inscrever-se · {tournament.buy_in.toLocaleString('pt-BR')} fichas
                     </button>
                   )}
                   {(tournament.current_user_entry || tournament.creator_user_id === user?.id) && (
@@ -199,9 +193,10 @@ export const TournamentLobbyPage: React.FC = () => {
         <CreateTournamentModal
           token={token}
           onClose={() => setShowCreate(false)}
-          onCreated={async () => {
+          onCreated={async (tournament) => {
             setShowCreate(false);
             await loadTournaments();
+            openRoom(tournament);
           }}
         />
       )}
@@ -225,7 +220,7 @@ const Stat: React.FC<{ icon: React.ReactNode; label: string; value: string }> = 
 const CreateTournamentModal: React.FC<{
   token: string | null;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onCreated: (tournament: Tournament) => Promise<void>;
 }> = ({ token, onClose, onCreated }) => {
   const [name, setName] = useState('Sit & Go dos Amigos');
   const [buyIn, setBuyIn] = useState(100);
@@ -243,7 +238,7 @@ const CreateTournamentModal: React.FC<{
     setSaving(true);
     setError(null);
     try {
-      await api.createTournament(token, {
+      const tournament = await api.createTournament(token, {
         nome: name.trim(),
         buy_in: buyIn,
         max_inscritos: maxEntries,
@@ -252,7 +247,7 @@ const CreateTournamentModal: React.FC<{
         small_blind: smallBlind,
         big_blind: bigBlind,
       });
-      await onCreated();
+      await onCreated(tournament);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Falha ao criar torneio');
     } finally {

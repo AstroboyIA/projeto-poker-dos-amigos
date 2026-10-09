@@ -355,6 +355,37 @@ func (tg *TableGame) JoinPlayer(userID uuid.UUID, name string, seatNumber int, b
 	return nil
 }
 
+func (tg *TableGame) MovePlayerSeat(userID uuid.UUID, seatNumber int) error {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if tg.Stage != StageWaiting {
+		return fmt.Errorf("assentos só podem ser alterados antes do início da partida")
+	}
+	var player *PlayerState
+	for _, candidate := range tg.Players {
+		if candidate.UserID != nil && *candidate.UserID == userID {
+			player = candidate
+			continue
+		}
+		if candidate.SeatNumber == seatNumber {
+			return fmt.Errorf("assento %d já ocupado", seatNumber)
+		}
+	}
+	if player == nil {
+		return fmt.Errorf("jogador não está inscrito na mesa")
+	}
+	if seatNumber < 1 {
+		return fmt.Errorf("assento inválido")
+	}
+	player.SeatNumber = seatNumber
+	player.ID = seatNumber
+	sort.Slice(tg.Players, func(i, j int) bool {
+		return tg.Players[i].SeatNumber < tg.Players[j].SeatNumber
+	})
+	return nil
+}
+
 func (tg *TableGame) Start() error {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()

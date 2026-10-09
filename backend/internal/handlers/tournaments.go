@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -109,6 +110,17 @@ func (h *TournamentHandler) Register(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Torneio inválido")
 		return
 	}
+	var request struct {
+		SeatNumber int `json:"seat_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "Assento inválido")
+		return
+	}
+	if request.SeatNumber < 0 {
+		response.Error(w, http.StatusBadRequest, "Assento inválido")
+		return
+	}
 	if h.authHandler == nil {
 		response.Error(w, http.StatusServiceUnavailable, "Serviço de usuários indisponível")
 		return
@@ -123,7 +135,7 @@ func (h *TournamentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if playerName == "" {
 		playerName = user.Username
 	}
-	tournament, seat, err := h.store.RegisterTournament(r.Context(), tournamentID, user.ID, playerName)
+	tournament, seat, err := h.store.RegisterTournament(r.Context(), tournamentID, user.ID, playerName, request.SeatNumber)
 	switch {
 	case errors.Is(err, database.ErrTournamentNotFound):
 		response.Error(w, http.StatusNotFound, "Torneio não encontrado")
@@ -131,6 +143,8 @@ func (h *TournamentHandler) Register(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusConflict, "Torneio sem vagas")
 	case errors.Is(err, database.ErrTournamentClosed):
 		response.Error(w, http.StatusConflict, "Inscrições encerradas")
+	case errors.Is(err, database.ErrTournamentSeat):
+		response.Error(w, http.StatusConflict, "O assento selecionado está indisponível")
 	case errors.Is(err, finance.ErrInsufficientFunds):
 		response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
 	case err != nil:
@@ -142,6 +156,66 @@ func (h *TournamentHandler) Register(w http.ResponseWriter, r *http.Request) {
 			"seat_number": seat,
 			"table_id":    tournament.TableID,
 		})
+	}
+}
+
+func (h *TournamentHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	tournamentID, err := uuid.Parse(chi.URLParam(r, "tournamentID"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Torneio inválido")
+		return
+	}
+	room, err := h.store.GetTournamentRoom(r.Context(), tournamentID, claims.UserID)
+	if errors.Is(err, database.ErrTournamentNotFound) {
+		response.Error(w, http.StatusNotFound, "Torneio não encontrado")
+		return
+	}
+	if err != nil {
+		log.Printf("Falha ao carregar sala do torneio %s: %v", tournamentID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar sala")
+		return
+	}
+	response.JSON(w, http.StatusOK, room)
+}
+
+func (h *TournamentHandler) ChangeSeat(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	tournamentID, err := uuid.Parse(chi.URLParam(r, "tournamentID"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Torneio inválido")
+		return
+	}
+	var request struct {
+		SeatNumber int `json:"seat_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.SeatNumber < 1 {
+		response.Error(w, http.StatusBadRequest, "Assento inválido")
+		return
+	}
+	err = h.store.MoveTournamentSeat(r.Context(), tournamentID, claims.UserID, request.SeatNumber)
+	switch {
+	case errors.Is(err, database.ErrTournamentNotFound):
+		response.Error(w, http.StatusNotFound, "Torneio não encontrado")
+	case errors.Is(err, database.ErrTournamentEntry):
+		response.Error(w, http.StatusForbidden, "Inscreva-se no torneio antes de escolher um assento")
+	case errors.Is(err, database.ErrTournamentSeat):
+		response.Error(w, http.StatusConflict, "O assento selecionado está indisponível")
+	case errors.Is(err, database.ErrTournamentClosed):
+		response.Error(w, http.StatusConflict, "Os assentos não podem ser alterados após o início do torneio")
+	case err != nil:
+		log.Printf("Falha ao alterar assento no torneio %s: %v", tournamentID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao alterar assento")
+	default:
+		response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 
