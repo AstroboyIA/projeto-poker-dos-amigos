@@ -1,0 +1,29 @@
+ALTER TABLE tournaments
+    ADD COLUMN IF NOT EXISTS starting_stack BIGINT NOT NULL DEFAULT 10000,
+    ADD COLUMN IF NOT EXISTS small_blind BIGINT NOT NULL DEFAULT 25,
+    ADD COLUMN IF NOT EXISTS big_blind BIGINT NOT NULL DEFAULT 50,
+    ADD COLUMN IF NOT EXISTS table_id UUID REFERENCES poker_tables(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS prize_pool BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS blind_level INT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS winner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+CREATE UNIQUE INDEX IF NOT EXISTS tournaments_table_id_unique_idx
+    ON tournaments(table_id) WHERE table_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS tournament_entries (
+    tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    seat_number INT NOT NULL CHECK (seat_number BETWEEN 1 AND 9),
+    status VARCHAR(32) NOT NULL DEFAULT 'registered',
+    prize_cents BIGINT NOT NULL DEFAULT 0 CHECK (prize_cents >= 0),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tournament_id, user_id),
+    UNIQUE (tournament_id, seat_number)
+);
+
+CREATE INDEX IF NOT EXISTS tournament_entries_user_idx
+    ON tournament_entries(user_id, created_at DESC);

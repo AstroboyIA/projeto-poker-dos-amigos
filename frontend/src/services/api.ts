@@ -15,7 +15,7 @@ export const api = {
   },
 
   async register(params: {
-    username?: string;
+    username: string;
     nome_completo?: string;
     telefone?: string;
     email?: string;
@@ -48,7 +48,53 @@ export const api = {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao buscar torneios');
     return data.data || [];
+  },
+
+  async createTournament(token: string, params: {
+    nome: string;
+    buy_in: number;
+    max_inscritos: number;
+    starting_stack: number;
+    blind_interval_min: number;
+    small_blind: number;
+    big_blind: number;
+  }): Promise<Tournament> {
+    const res = await fetch(`${API_BASE}/tournaments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao criar torneio');
+    return data.data;
+  },
+
+  async registerTournament(token: string, tournamentId: string): Promise<{
+    tournament: Tournament;
+    seat_number: number;
+    table_id: string;
+  }> {
+    const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/register`, {
+      method: 'POST',
+      headers: { Authorization: ['Bearer', token].join(' ') },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha na inscrição do torneio');
+    return data.data;
+  },
+
+  async startTournament(token: string, tournamentId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/start`, {
+      method: 'POST',
+      headers: { Authorization: ['Bearer', token].join(' ') },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao iniciar torneio');
   },
 
   async getRankings(token: string): Promise<RankingEntry[]> {

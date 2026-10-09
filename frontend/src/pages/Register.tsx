@@ -35,6 +35,7 @@ export const RegisterPage: React.FC = () => {
       const data = await api.register(modoRapido
         ? { username, senha, aceitou_termos: aceitouTermos }
         : {
+            username,
             nome_completo: nomeCompleto,
             telefone,
             email,
@@ -99,25 +100,25 @@ export const RegisterPage: React.FC = () => {
         )}
 
         <form onSubmit={handleRegister} className="space-y-3.5">
-          {modoRapido && (
-            <>
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
-                  <User size={13} className="text-[#d4af37]" />
-                  USERNAME
-                </label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Escolha seu username"
-                  autoComplete="username"
-                  required
-                  className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
-                />
-              </div>
-            </>
-          )}
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">
+              <User size={13} className="text-[#d4af37]" />
+              USERNAME
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Ex.: nome-sobrenome ou nome_sobrenome"
+              autoComplete="username"
+              required
+              maxLength={100}
+              pattern="[\p{L}\p{N}]+([-_][\p{L}\p{N}]+)*"
+              title="Use letras e números; separe palavras com hífen (-) ou sublinhado (_), sem espaços."
+              className="w-full bg-[#12141a]/90 border border-[#d4af37]/40 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-[#f0cc66]"
+            />
+            <p className="text-[10px] text-zinc-500">Sem espaços; use hífen (-) ou sublinhado (_) para separar palavras.</p>
+          </div>
 
           <div className="space-y-1">
             <label className="text-[11px] font-semibold tracking-wider text-[#d4af37] uppercase flex items-center gap-1.5">

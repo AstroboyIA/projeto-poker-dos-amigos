@@ -81,7 +81,7 @@ type Hub struct {
 	unregister    chan *Client
 	gameService   *engine.GameService
 	store         *database.Store
-	releaseSeat   func(uuid.UUID, int)
+	releaseSeat   func(uuid.UUID, uuid.UUID, int, int64, bool)
 	turnTimers    map[uuid.UUID]uint64
 	turnTimeout   time.Duration
 	showdownDelay time.Duration
@@ -133,7 +133,13 @@ func (h *Hub) handleSharedUpdate(event string) {
 			log.Printf("Falha ao atualizar lobby a partir do PostgreSQL: %v", err)
 			return
 		}
-		payload, err := json.Marshal(tables)
+		cashTables := make([]models.PokerTable, 0, len(tables))
+		for _, table := range tables {
+			if table.Tipo != models.TableTypeTournament {
+				cashTables = append(cashTables, table)
+			}
+		}
+		payload, err := json.Marshal(cashTables)
 		if err != nil {
 			log.Printf("Falha ao serializar lobby compartilhado: %v", err)
 			return
@@ -200,22 +206,25 @@ func (h *Hub) UpdateGame(tableID uuid.UUID, update func(*engine.TableGame) error
 	return game, nil
 }
 
-func (h *Hub) removePlayerFromTable(tableID, userID uuid.UUID) {
+func (h *Hub) removePlayerFromTable(tableID, userID uuid.UUID) (int64, bool) {
+	var stack int64
+	var removed bool
 	table, err := h.UpdateGame(tableID, func(game *engine.TableGame) error {
-		game.LeavePlayer(userID)
+		stack, removed = game.LeavePlayerWithStack(userID)
 		return nil
 	})
 	if err != nil {
 		if !errors.Is(err, database.ErrTableNotFound) {
 			log.Printf("Falha ao persistir saída de %s da mesa %s: %v", userID, tableID, err)
 		}
-		return
+		return 0, false
 	}
 	h.handlePlayerDeparture(tableID, table)
+	return stack, removed
 }
 
 // SetReleaseSeatHandler links the websocket lifecycle to the lobby occupancy.
-func (h *Hub) SetReleaseSeatHandler(handler func(uuid.UUID, int)) {
+func (h *Hub) SetReleaseSeatHandler(handler func(uuid.UUID, uuid.UUID, int, int64, bool)) {
 	h.releaseSeat = handler
 }
 
@@ -229,13 +238,24 @@ func (h *Hub) Run() {
 			log.Printf("Cliente WS conectado: %s (User: %s)", client.Conn.RemoteAddr(), client.Nome)
 
 		case client := <-h.unregister:
+			preserveTournamentSeat := false
+			if client.TableID != nil {
+				isTournament, err := h.isTournamentTable(*client.TableID)
+				if err != nil {
+					log.Printf("Falha ao verificar desconexão da mesa %s: %v", *client.TableID, err)
+					preserveTournamentSeat = true
+				} else {
+					preserveTournamentSeat = isTournament
+				}
+			}
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.Send)
 				tableID := client.TableID
-				if client.TableID != nil {
-					tid := *client.TableID
+				seatNumber := client.SeatNumber
+				if tableID != nil {
+					tid := *tableID
 					if tbl, exists := h.tables[tid]; exists {
 						delete(tbl, client)
 						if len(tbl) == 0 {
@@ -243,12 +263,19 @@ func (h *Hub) Run() {
 						}
 					}
 					// Notifica GameService da saída
-					if h.gameService != nil {
-						go h.removePlayerFromTable(tid, client.UserID)
-					}
 				}
-				if tableID != nil && client.SeatNumber > 0 && h.releaseSeat != nil {
-					h.releaseSeat(*tableID, client.SeatNumber)
+				if tableID != nil && seatNumber > 0 && !preserveTournamentSeat {
+					tid, userID := *tableID, client.UserID
+					go func() {
+						var stack int64
+						var removed bool
+						if h.gameService != nil {
+							stack, removed = h.removePlayerFromTable(tid, userID)
+						}
+						if h.releaseSeat != nil {
+							h.releaseSeat(tid, userID, seatNumber, stack, removed)
+						}
+					}()
 				}
 			}
 			h.mu.Unlock()
@@ -504,6 +531,10 @@ func (c *Client) handleJoinTable(tableID uuid.UUID, seatNumber int, buyIn int64)
 
 	c.Hub.broadcastCurrentTableState(tableID, table)
 	c.Hub.scheduleTurnTimeout(tableID, table)
+	state := table.GetPublicState()
+	if state.Stage == engine.StageShowdown || state.Stage == engine.StageHandOver {
+		c.Hub.scheduleNextHand(tableID, table)
+	}
 }
 
 func (c *Client) handleStartTable() {
@@ -512,12 +543,21 @@ func (c *Client) handleStartTable() {
 		return
 	}
 	tableID := *c.TableID
+	isTournament, err := c.Hub.isTournamentTable(tableID)
+	if err != nil {
+		c.sendError("Não foi possível validar o tipo da mesa")
+		return
+	}
+	if isTournament {
+		c.sendError("O início de um torneio é controlado pelo gerente")
+		return
+	}
 	table, ok := c.Hub.gameService.GetTable(tableID)
 	if !ok {
 		c.sendError("Mesa não encontrada")
 		return
 	}
-	table, err := c.Hub.UpdateGame(tableID, func(game *engine.TableGame) error {
+	table, err = c.Hub.UpdateGame(tableID, func(game *engine.TableGame) error {
 		return game.Start()
 	})
 	if err != nil {
@@ -549,6 +589,15 @@ func (c *Client) handleLeaveTable() {
 		return
 	}
 	tableID := *c.TableID
+	isTournament, err := c.Hub.isTournamentTable(tableID)
+	if err != nil {
+		c.sendError("Não foi possível validar a mesa")
+		return
+	}
+	if isTournament {
+		c.sendError("A inscrição de torneio permanece ativa até o término")
+		return
+	}
 
 	c.Hub.mu.Lock()
 	if tbl, exists := c.Hub.tables[tableID]; exists {
@@ -565,11 +614,24 @@ func (c *Client) handleLeaveTable() {
 	log.Printf("Jogador %s (%s) saiu da mesa %s", c.Nome, c.UserID, tableID)
 
 	if c.Hub.gameService != nil {
-		c.Hub.removePlayerFromTable(tableID, c.UserID)
+		stack, removed := c.Hub.removePlayerFromTable(tableID, c.UserID)
+		if seatNumber > 0 && c.Hub.releaseSeat != nil {
+			c.Hub.releaseSeat(tableID, c.UserID, seatNumber, stack, removed)
+		}
 	}
-	if seatNumber > 0 && c.Hub.releaseSeat != nil {
-		c.Hub.releaseSeat(tableID, seatNumber)
+}
+
+func (h *Hub) isTournamentTable(tableID uuid.UUID) (bool, error) {
+	if h.store == nil {
+		return false, nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	table, err := h.store.GetTable(ctx, tableID)
+	if err != nil {
+		return false, err
+	}
+	return table.Tipo == models.TableTypeTournament, nil
 }
 
 func (h *Hub) handlePlayerDeparture(tableID uuid.UUID, table *engine.TableGame) {

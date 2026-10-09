@@ -1,14 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/database"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/pkg/response"
 )
@@ -19,6 +24,7 @@ type AuthHandler struct {
 	tokenManager *auth.TokenManager
 	users        map[string]*models.User // Em memória com fallback / demo
 	mu           sync.RWMutex
+	store        *database.Store
 }
 
 func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
@@ -90,6 +96,14 @@ func NewAuthHandler(tm *auth.TokenManager) *AuthHandler {
 	return h
 }
 
+func NewAuthHandlerWithStore(tm *auth.TokenManager, store *database.Store) *AuthHandler {
+	return &AuthHandler{
+		tokenManager: tm,
+		users:        make(map[string]*models.User),
+		store:        store,
+	}
+}
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -106,9 +120,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.RLock()
-	user, exists := h.users[strings.ToLower(identifier)]
-	h.mu.RUnlock()
+	var user *models.User
+	var exists bool
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		user, err = h.store.GetUserByIdentity(ctx, req.Username, req.Email)
+		if err != nil && !errors.Is(err, database.ErrUserNotFound) {
+			log.Printf("Falha ao consultar usuário para login: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao autenticar")
+			return
+		}
+		exists = err == nil
+	} else {
+		h.mu.RLock()
+		user, exists = h.users[strings.ToLower(identifier)]
+		h.mu.RUnlock()
+	}
 
 	if !exists || !auth.CheckPasswordHash(req.Senha, user.PasswordHash) {
 		response.Error(w, http.StatusUnauthorized, "Credenciais inválidas. Verifique seu username/e-mail e senha.")
@@ -141,25 +170,37 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
-	req.Email = strings.TrimSpace(req.Email)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.NomeCompleto = strings.TrimSpace(req.NomeCompleto)
 	req.Telefone = strings.TrimSpace(req.Telefone)
-	usernameOnly := req.Username != "" && req.Email == "" && req.NomeCompleto == "" && req.Telefone == "" && req.DataNasc == "" && req.CidadeEstado == ""
+	if req.Username == "" {
+		response.Error(w, http.StatusBadRequest, "Username é obrigatório")
+		return
+	}
+	if !validUsername(req.Username) {
+		response.Error(w, http.StatusBadRequest, "Username deve conter apenas letras, números, hífen ou sublinhado, sem espaços")
+		return
+	}
 	if req.Senha == "" {
 		response.Error(w, http.StatusBadRequest, "A senha é obrigatória")
 		return
 	}
-	if req.Username == "" && req.Email == "" {
-		response.Error(w, http.StatusBadRequest, "Username ou e-mail é obrigatório")
-		return
-	}
-	if !usernameOnly && (req.NomeCompleto == "" || req.Email == "" || req.Telefone == "") {
+	if req.Email != "" && (req.NomeCompleto == "" || req.Telefone == "") {
 		response.Error(w, http.StatusBadRequest, "Nome, telefone e e-mail são obrigatórios para o cadastro completo")
 		return
 	}
 
 	if !req.AceitouTermo {
 		response.Error(w, http.StatusBadRequest, "É obrigatório aceitar o regulamento do clube e declarar ser maior de 18 anos")
+		return
+	}
+	if req.Username != "" && strings.EqualFold(req.Username, req.Email) {
+		response.Error(w, http.StatusConflict, "Username e e-mail já estão em uso")
+		return
+	}
+
+	if h.store != nil {
+		h.registerPersistent(w, r, req)
 		return
 	}
 
@@ -228,6 +269,72 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func validUsername(username string) bool {
+	runes := []rune(username)
+	if len(runes) == 0 || len(runes) > 100 {
+		return false
+	}
+	previousSeparator := true
+	for _, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			previousSeparator = false
+			continue
+		}
+		if (r != '-' && r != '_') || previousSeparator {
+			return false
+		}
+		previousSeparator = true
+	}
+	return !previousSeparator
+}
+
+func (h *AuthHandler) registerPersistent(w http.ResponseWriter, r *http.Request, req models.RegisterRequest) {
+	hash, err := auth.HashPassword(req.Senha)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "Erro ao processar senha")
+		return
+	}
+	now := time.Now()
+	newUser := &models.User{
+		ID:           uuid.New(),
+		Username:     req.Username,
+		NomeCompleto: req.NomeCompleto,
+		Telefone:     req.Telefone,
+		Email:        strings.ToLower(req.Email),
+		PasswordHash: hash,
+		DataNasc:     req.DataNasc,
+		CidadeEstado: req.CidadeEstado,
+		AceitouTermo: req.AceitouTermo,
+		Role:         models.RoleJogador,
+		Status:       models.StatusAtivo,
+		SaldoFichas:  initialPlayerChips,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	token, exp, err := h.tokenManager.GenerateToken(newUser, 24*time.Hour)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "Erro ao gerar token de autenticação")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := h.store.CreateUser(ctx, newUser); err != nil {
+		switch {
+		case errors.Is(err, database.ErrUsernameTaken):
+			response.Error(w, http.StatusConflict, "Já existe uma conta cadastrada com este username")
+		case errors.Is(err, database.ErrEmailTaken):
+			response.Error(w, http.StatusConflict, "Já existe uma conta cadastrada com este e-mail")
+		default:
+			log.Printf("Falha ao salvar novo usuário no PostgreSQL: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao criar conta")
+		}
+		return
+	}
+	response.JSON(w, http.StatusCreated, models.AuthResponse{
+		Token: token, ExpiresAt: exp, User: *newUser,
+	})
+}
+
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
 	if !ok {
@@ -235,9 +342,24 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.RLock()
-	user, exists := h.getUserByIdentityLocked(claims.Username, claims.Email)
-	h.mu.RUnlock()
+	var user *models.User
+	var exists bool
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		user, err = h.store.GetUserByID(ctx, claims.UserID)
+		if err != nil && !errors.Is(err, database.ErrUserNotFound) {
+			log.Printf("Falha ao consultar usuário autenticado: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao carregar usuário")
+			return
+		}
+		exists = err == nil
+	} else {
+		h.mu.RLock()
+		user, exists = h.getUserByIdentityLocked(claims.Username, claims.Email)
+		h.mu.RUnlock()
+	}
 
 	if !exists {
 		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
@@ -248,6 +370,18 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) GetUserByEmail(email string) (*models.User, bool) {
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		user, err := h.store.GetUserByIdentity(ctx, "", email)
+		if err != nil {
+			if !errors.Is(err, database.ErrUserNotFound) {
+				log.Printf("Falha ao consultar usuário por e-mail: %v", err)
+			}
+			return nil, false
+		}
+		return user, true
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	u, exists := h.users[strings.ToLower(strings.TrimSpace(email))]
@@ -255,9 +389,29 @@ func (h *AuthHandler) GetUserByEmail(email string) (*models.User, bool) {
 }
 
 func (h *AuthHandler) GetUserByIdentity(username, email string) (*models.User, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	user, err := h.FindUserByIdentity(ctx, username, email)
+	if err != nil {
+		if !errors.Is(err, database.ErrUserNotFound) {
+			log.Printf("Falha ao consultar usuário por identidade: %v", err)
+		}
+		return nil, false
+	}
+	return user, true
+}
+
+func (h *AuthHandler) FindUserByIdentity(ctx context.Context, username, email string) (*models.User, error) {
+	if h.store != nil {
+		return h.store.GetUserByIdentity(ctx, username, email)
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.getUserByIdentityLocked(username, email)
+	user, ok := h.getUserByIdentityLocked(username, email)
+	if !ok {
+		return nil, database.ErrUserNotFound
+	}
+	return user, nil
 }
 
 func (h *AuthHandler) getUserByIdentityLocked(username, email string) (*models.User, bool) {

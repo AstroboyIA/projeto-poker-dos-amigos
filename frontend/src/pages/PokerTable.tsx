@@ -96,14 +96,15 @@ export const PokerTablePage: React.FC = () => {
 
   // Parâmetros de entrada
   const tableId = searchParams.get('tableId') || 'mesa-vip-01';
+  const isTournamentMode = searchParams.get('mode') === 'tournament';
   const room = getTableRoomById(tableId);
   const chosenSeat = Number(searchParams.get('seat')) || 3;
   const initialBuyIn = Number(searchParams.get('buyIn')) || 2500;
 
   // Configuração da Mesa (9-Max)
-  const tableName = `${room?.name || "Mesa VIP Ouro #01 (Texas Hold'em)"} (9-Max)`;
-  const smallBlindVal = room?.smallBlind || 25;
-  const bigBlindVal = room?.bigBlind || 50;
+  const tableName = `${room?.name || (isTournamentMode ? 'Sit & Go' : "Mesa VIP Ouro #01 (Texas Hold'em)")} (9-Max)`;
+  const [smallBlindVal, setSmallBlindVal] = useState(room?.smallBlind || 25);
+  const [bigBlindVal, setBigBlindVal] = useState(room?.bigBlind || 50);
   const MAX_ACTION_TIME = 20; // Tempo máximo de aposta aumentado para 20 segundos
 
   const initialPlayers: TablePlayer[] = [{
@@ -247,6 +248,8 @@ export const PokerTablePage: React.FC = () => {
     setCurrentRoundBet(serverState.current_round_bet);
     setCurrentTurnIdx(serverState.current_turn_idx);
     setCommunityCards(serverState.community_cards || []);
+    setSmallBlindVal(serverState.small_blind);
+    setBigBlindVal(serverState.big_blind);
     if (serverState.winner_message) {
       setWinnerMessage(serverState.winner_message);
       if (soundEnabled) soundFX.playWinFanfare();
@@ -349,15 +352,17 @@ export const PokerTablePage: React.FC = () => {
     if (isExiting) return;
     setIsExiting(true);
     try {
-      await leaveTableSeatRemote(token, tableId, chosenSeat);
+      if (!isTournamentMode) {
+        await leaveTableSeatRemote(token, tableId, chosenSeat);
+      }
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'LEAVE_TABLE' }));
       }
-      await refreshUser();
+      if (!isTournamentMode) await refreshUser();
     } catch (e) {
       console.warn('Erro ao processar cash-out:', e);
     }
-    const dest = destination || (user?.role === 'admin_gerente' || user?.role === 'gerente' ? '/manager' : '/player');
+    const dest = destination || (isTournamentMode ? '/tournaments' : user?.role === 'admin_gerente' || user?.role === 'gerente' ? '/manager' : '/player');
     navigate(dest);
   };
 
@@ -401,6 +406,7 @@ export const PokerTablePage: React.FC = () => {
   const availableRebuy = Math.min(room?.buyInMax || 5000, user?.saldo_fichas || 0);
   const minimumRebuy = room?.buyInMin || 1000;
   const requiresRebuyDecision = Boolean(
+    !isTournamentMode &&
     userPlayer &&
     userPlayer.stack <= 0 &&
     (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'WAITING')
@@ -507,10 +513,10 @@ export const PokerTablePage: React.FC = () => {
           <button
             onClick={() => setShowExitModal(true)}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/60 text-red-200 hover:text-white text-xs font-extrabold uppercase tracking-wider transition cursor-pointer shadow-md"
-            title="Sair da Mesa de Poker"
+            title={isTournamentMode ? 'Voltar à lista de torneios' : 'Sair da Mesa de Poker'}
           >
             <LogOut size={15} />
-            <span>SAIR DA MESA</span>
+            <span>{isTournamentMode ? 'VOLTAR AOS TORNEIOS' : 'SAIR DA MESA'}</span>
           </button>
           <div>
             <div className="flex items-center space-x-2">
@@ -572,7 +578,9 @@ export const PokerTablePage: React.FC = () => {
                 DESEJA SAIR DA MESA?
               </h3>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Seu saldo de <span className="text-[#f5d77f] font-bold font-mono">${userPlayer?.stack?.toLocaleString('pt-BR') || 0}</span> fichas será preservado e você retornará ao painel principal.
+                {isTournamentMode
+                  ? 'Você continuará inscrito no torneio e poderá retornar à mesa enquanto ele estiver em andamento.'
+                  : <>Seu saldo de <span className="text-[#f5d77f] font-bold font-mono">${userPlayer?.stack?.toLocaleString('pt-BR') || 0}</span> fichas será preservado e você retornará ao painel principal.</>}
               </p>
             </div>
 
@@ -588,7 +596,7 @@ export const PokerTablePage: React.FC = () => {
                 onClick={() => void handleConfirmExit()}
                 className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-xs font-extrabold text-white uppercase tracking-wider transition shadow-lg cursor-pointer disabled:opacity-50"
               >
-                {isExiting ? 'CASH-OUT...' : 'SIM, SAIR'}
+                {isExiting ? 'AGUARDE...' : isTournamentMode ? 'VOLTAR À LISTA' : 'SIM, SAIR'}
               </button>
             </div>
           </div>
@@ -646,6 +654,19 @@ export const PokerTablePage: React.FC = () => {
                 SAIR DA MESA
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isTournamentMode && userPlayer && userPlayer.stack <= 0 && (stage === 'SHOWDOWN' || stage === 'HAND_OVER' || stage === 'WAITING') && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/85 p-4">
+          <div className="w-full max-w-sm space-y-4 rounded-2xl border border-amber-400/70 bg-[#12151d] p-6 text-center">
+            <Trophy className="mx-auto text-[#d4af37]" size={28} />
+            <h2 className="font-extrabold uppercase text-[#f5d77f]">Você foi eliminado</h2>
+            <p className="text-xs text-zinc-300">Sua inscrição permanece registrada; o prêmio será creditado ao vencedor quando o torneio terminar.</p>
+            <button onClick={() => void handleConfirmExit('/tournaments')} className="w-full rounded-lg bg-[#d4af37] py-2 text-xs font-extrabold uppercase text-black">
+              Voltar aos torneios
+            </button>
           </div>
         </div>
       )}
@@ -746,7 +767,7 @@ export const PokerTablePage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-2 pt-1">
-                {players.length >= 2 && (
+                {players.length >= 2 && !isTournamentMode && (
                   <button
                     type="button"
                     onClick={handleStartTable}

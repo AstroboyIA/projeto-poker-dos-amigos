@@ -73,7 +73,7 @@ export const PlayerDashboard: React.FC = () => {
       desc: 'Crie e gerencie torneios',
       icon: Calendar,
       color: 'from-purple-800 to-indigo-950',
-      action: () => setSelectedModule('Inscrições em Torneios Disponíveis'),
+      action: () => navigate('/tournaments'),
     },
     {
       id: 'cashgames',

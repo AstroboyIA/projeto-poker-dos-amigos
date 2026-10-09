@@ -57,7 +57,7 @@ export const ManagerDashboard: React.FC = () => {
       desc: 'Crie e gerencie torneios',
       icon: Calendar,
       color: 'from-blue-700 to-indigo-950',
-      action: () => setSelectedModule('Gestão de Torneios e Estruturas'),
+      action: () => navigate('/tournaments'),
     },
     {
       id: 'ranking',

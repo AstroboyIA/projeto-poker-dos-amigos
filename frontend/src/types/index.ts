@@ -56,6 +56,18 @@ export interface Tournament {
   data_inicio: string;
   status: string;
   blind_interval_min: number;
+  starting_stack: number;
+  small_blind: number;
+  big_blind: number;
+  table_id?: string;
+  winner_user_id?: string;
+  winner_name?: string;
+  blind_level: number;
+  current_user_seat?: number;
+  current_user_entry: boolean;
+  current_user_status?: string;
+  started_at?: string;
+  finished_at?: string;
 }
 
 export interface RankingEntry {

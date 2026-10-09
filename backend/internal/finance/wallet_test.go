@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,17 +10,20 @@ import (
 func TestReturnFromTableSettlesOnlyThatTableReservation(t *testing.T) {
 	service := NewService()
 	userID := uuid.New()
-	service.EnsureWallet(userID, 1000)
+	ctx := context.Background()
+	if _, err := service.EnsureWallet(ctx, userID, 1000); err != nil {
+		t.Fatalf("carteira inicial falhou: %v", err)
+	}
 	tableOne := uuid.NewString()
 	tableTwo := uuid.NewString()
 
-	if _, err := service.BuyIn(userID, 300, tableOne, "table-one-buy-in"); err != nil {
+	if _, err := service.BuyIn(ctx, userID, 300, tableOne, "table-one-buy-in"); err != nil {
 		t.Fatalf("buy-in da primeira mesa falhou: %v", err)
 	}
-	if _, err := service.BuyIn(userID, 200, tableTwo, "table-two-buy-in"); err != nil {
+	if _, err := service.BuyIn(ctx, userID, 200, tableTwo, "table-two-buy-in"); err != nil {
 		t.Fatalf("buy-in da segunda mesa falhou: %v", err)
 	}
-	wallet, err := service.ReturnFromTable(userID, 0, tableOne, "table-one-exit")
+	wallet, err := service.ReturnFromTable(ctx, userID, 0, tableOne, "table-one-exit")
 	if err != nil {
 		t.Fatalf("saída sem fichas falhou: %v", err)
 	}
@@ -27,7 +31,7 @@ func TestReturnFromTableSettlesOnlyThatTableReservation(t *testing.T) {
 		t.Fatalf("carteira após perder o stack: %+v", wallet)
 	}
 
-	wallet, err = service.ReturnFromTable(userID, 200, tableTwo, "table-two-exit")
+	wallet, err = service.ReturnFromTable(ctx, userID, 200, tableTwo, "table-two-exit")
 	if err != nil {
 		t.Fatalf("saída da segunda mesa falhou: %v", err)
 	}

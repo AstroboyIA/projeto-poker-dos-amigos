@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -50,6 +51,17 @@ type Service struct {
 	ledger            map[uuid.UUID][]LedgerEntry
 	processed         map[string]LedgerEntry
 	tableReservations map[uuid.UUID]map[string]int64
+	repository        Repository
+}
+
+type Repository interface {
+	EnsureWallet(context.Context, uuid.UUID, int64) (Wallet, error)
+	GetWallet(context.Context, uuid.UUID) (Wallet, bool, error)
+	ListWalletEntries(context.Context, uuid.UUID) ([]LedgerEntry, error)
+	Deposit(context.Context, uuid.UUID, int64, string) (Wallet, error)
+	BuyIn(context.Context, uuid.UUID, int64, string, string) (Wallet, error)
+	ReturnFromTable(context.Context, uuid.UUID, int64, string, string) (Wallet, error)
+	RefundBuyIn(context.Context, uuid.UUID, int64, string, string) (Wallet, error)
 }
 
 func NewService() *Service {
@@ -61,33 +73,49 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) EnsureWallet(userID uuid.UUID, initialCents int64) Wallet {
+func NewPersistentService(repository Repository) *Service {
+	return &Service{repository: repository}
+}
+
+func (s *Service) EnsureWallet(ctx context.Context, userID uuid.UUID, initialCents int64) (Wallet, error) {
+	if s.repository != nil {
+		return s.repository.EnsureWallet(ctx, userID, initialCents)
+	}
+	if initialCents < 0 {
+		return Wallet{}, ErrInvalidAmount
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if wallet, ok := s.wallets[userID]; ok {
-		return *wallet
+		return *wallet, nil
 	}
 	now := time.Now()
 	wallet := &Wallet{ID: uuid.New(), UserID: userID, BalanceCents: initialCents, AvailableCents: initialCents, UpdatedAt: now}
 	s.wallets[userID] = wallet
-	return *wallet
+	return *wallet, nil
 }
 
-func (s *Service) Get(userID uuid.UUID) (Wallet, bool) {
+func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Wallet, bool, error) {
+	if s.repository != nil {
+		return s.repository.GetWallet(ctx, userID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wallet, ok := s.wallets[userID]
 	if !ok {
-		return Wallet{}, false
+		return Wallet{}, false, nil
 	}
-	return *wallet, true
+	return *wallet, true, nil
 }
 
-func (s *Service) Entries(userID uuid.UUID) []LedgerEntry {
+func (s *Service) Entries(ctx context.Context, userID uuid.UUID) ([]LedgerEntry, error) {
+	if s.repository != nil {
+		return s.repository.ListWalletEntries(ctx, userID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries := append([]LedgerEntry(nil), s.ledger[userID]...)
-	return entries
+	return entries, nil
 }
 
 func processedKey(userID uuid.UUID, key string) string {
@@ -134,19 +162,28 @@ func (s *Service) applyLocked(userID uuid.UUID, amount int64, kind TransactionTy
 	return *wallet, nil
 }
 
-func (s *Service) Deposit(userID uuid.UUID, cents int64, key string) (Wallet, error) {
+func (s *Service) Deposit(ctx context.Context, userID uuid.UUID, cents int64, key string) (Wallet, error) {
+	if s.repository != nil {
+		return s.repository.Deposit(ctx, userID, cents, key)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.applyLocked(userID, cents, Deposit, "dev_mock", "", key)
 }
 
-func (s *Service) BuyIn(userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+func (s *Service) BuyIn(ctx context.Context, userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+	if s.repository != nil {
+		return s.repository.BuyIn(ctx, userID, cents, tableID, key)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.applyLocked(userID, cents, BuyIn, "table", tableID, key)
 }
 
-func (s *Service) ReturnFromTable(userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+func (s *Service) ReturnFromTable(ctx context.Context, userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+	if s.repository != nil {
+		return s.repository.ReturnFromTable(ctx, userID, cents, tableID, key)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wallet, ok := s.wallets[userID]
@@ -179,7 +216,10 @@ func (s *Service) ReturnFromTable(userID uuid.UUID, cents int64, tableID, key st
 	return *wallet, nil
 }
 
-func (s *Service) RefundBuyIn(userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+func (s *Service) RefundBuyIn(ctx context.Context, userID uuid.UUID, cents int64, tableID, key string) (Wallet, error) {
+	if s.repository != nil {
+		return s.repository.RefundBuyIn(ctx, userID, cents, tableID, key)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cents <= 0 {
@@ -211,14 +251,6 @@ func (s *Service) RefundBuyIn(userID uuid.UUID, cents int64, tableID, key string
 	s.ledger[userID] = append(s.ledger[userID], entry)
 	if key != "" {
 		s.processed[processedKey(userID, key)] = entry
-	}
-	return *wallet, nil
-}
-
-func (s *Service) GetUnlocked(userID uuid.UUID) (Wallet, error) {
-	wallet, ok := s.wallets[userID]
-	if !ok {
-		return Wallet{}, errors.New("carteira não encontrada")
 	}
 	return *wallet, nil
 }

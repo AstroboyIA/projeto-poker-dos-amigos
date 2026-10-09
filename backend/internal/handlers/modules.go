@@ -41,7 +41,26 @@ func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
 func NewModulesHandlerWithStore(hub *ws.Hub, authHandler *AuthHandler, store *database.Store) *ModulesHandler {
 	handler := NewModulesHandler(hub, authHandler)
 	handler.store = store
+	handler.wallets = finance.NewPersistentService(store)
 	return handler
+}
+
+func (h *ModulesHandler) userFromClaims(w http.ResponseWriter, r *http.Request, claims *auth.Claims) (*models.User, bool) {
+	if h.authHandler == nil {
+		response.Error(w, http.StatusServiceUnavailable, "Serviço de usuários indisponível")
+		return nil, false
+	}
+	user, err := h.authHandler.FindUserByIdentity(r.Context(), claims.Username, claims.Email)
+	if errors.Is(err, database.ErrUserNotFound) {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return nil, false
+	}
+	if err != nil {
+		log.Printf("Falha ao consultar usuário autenticado %s: %v", claims.UserID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar usuário")
+		return nil, false
+	}
+	return user, true
 }
 
 func (h *ModulesHandler) broadcastTablesUpdate() {
@@ -68,46 +87,6 @@ func (h *ModulesHandler) broadcastTablesUpdate() {
 	}
 }
 
-// Lista de Torneios
-func (h *ModulesHandler) GetTournaments(w http.ResponseWriter, r *http.Request) {
-	tournaments := []models.Tournament{
-		{
-			ID:            uuid.New(),
-			Nome:          "🏆 Super High Roller Semanal",
-			BuyIn:         500,
-			Garantido:     25000,
-			Inscritos:     32,
-			MaxInscritos:  50,
-			DataInicio:    time.Now().Add(2 * time.Hour),
-			Status:        "aberto",
-			BlindInterval: 15,
-		},
-		{
-			ID:            uuid.New(),
-			Nome:          "🔥 Torneio dos Amigos DeepStack",
-			BuyIn:         100,
-			Garantido:     10000,
-			Inscritos:     45,
-			MaxInscritos:  100,
-			DataInicio:    time.Now().Add(6 * time.Hour),
-			Status:        "aberto",
-			BlindInterval: 12,
-		},
-		{
-			ID:            uuid.New(),
-			Nome:          "⚡ Turbo Knockout 6-Max",
-			BuyIn:         150,
-			Garantido:     8000,
-			Inscritos:     18,
-			MaxInscritos:  36,
-			DataInicio:    time.Now().Add(24 * time.Hour),
-			Status:        "aberto",
-			BlindInterval: 8,
-		},
-	}
-	response.JSON(w, http.StatusOK, tournaments)
-}
-
 // Ranking Geral do Clube
 func (h *ModulesHandler) GetRankings(w http.ResponseWriter, r *http.Request) {
 	rankings := []models.RankingEntry{
@@ -129,7 +108,13 @@ func (h *ModulesHandler) GetTables(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusInternalServerError, "Falha ao carregar mesas")
 			return
 		}
-		response.JSON(w, http.StatusOK, tables)
+		cashTables := make([]models.PokerTable, 0, len(tables))
+		for _, table := range tables {
+			if table.Tipo != models.TableTypeTournament {
+				cashTables = append(cashTables, table)
+			}
+		}
+		response.JSON(w, http.StatusOK, cashTables)
 		return
 	}
 	h.mu.RLock()
@@ -290,6 +275,13 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var user *models.User
+	if h.authHandler != nil {
+		user, ok = h.userFromClaims(w, r, claims)
+		if !ok {
+			return
+		}
+	}
 	var req SeatActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Dados inválidos")
@@ -302,10 +294,21 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, "Mesa inválida")
 			return
 		}
+		tableConfig, err := h.store.GetTable(r.Context(), tableID)
+		if err != nil {
+			log.Printf("Falha ao validar mesa ao sair: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao validar mesa")
+			return
+		}
+		if tableConfig.Tipo == models.TableTypeTournament {
+			response.Error(w, http.StatusConflict, "A inscrição de torneio não pode ser encerrada pela saída da mesa")
+			return
+		}
 		var stack int64
+		var removed bool
 		if h.hub != nil && h.hub.GameService() != nil {
 			game, updateErr := h.hub.UpdateGame(tableID, func(game *engine.TableGame) error {
-				stack, _ = game.LeavePlayerWithStack(claims.UserID)
+				stack, removed = game.LeavePlayerWithStack(claims.UserID)
 				return nil
 			})
 			if updateErr != nil {
@@ -319,46 +322,70 @@ func (h *ModulesHandler) LeaveSeat(w http.ResponseWriter, r *http.Request) {
 			}
 			h.hub.GameService().SetTable(game)
 		}
+		if !removed {
+			response.Error(w, http.StatusConflict, "Jogador não está sentado nesta mesa")
+			return
+		}
 		if !h.releaseSeat(req.TableID, req.SeatNumber) {
 			response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 			return
 		}
-		if stack > 0 && h.authHandler != nil {
-			if user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email); exists {
-				h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
-				wallet, returnErr := h.wallets.ReturnFromTable(user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
-				if returnErr != nil {
-					log.Printf("Falha ao devolver saldo da mesa para o usuário %s: %v", user.ID, returnErr)
-					response.Error(w, http.StatusInternalServerError, "Assento liberado; retorno do saldo precisa de suporte")
-					return
-				}
-				user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
-				user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
+		if user != nil {
+			if _, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas); err != nil {
+				log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+				response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+				return
 			}
+			wallet, returnErr := h.wallets.ReturnFromTable(r.Context(), user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
+			if returnErr != nil {
+				log.Printf("Falha ao devolver saldo da mesa para o usuário %s: %v", user.ID, returnErr)
+				response.Error(w, http.StatusInternalServerError, "Assento liberado; retorno do saldo precisa de suporte")
+				return
+			}
+			user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+			user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
 		}
 		response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
 
+	if h.hub == nil {
+		response.Error(w, http.StatusServiceUnavailable, "Serviço da mesa indisponível")
+		return
+	}
+	tableID, err := uuid.Parse(req.TableID)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Mesa inválida")
+		return
+	}
+	table, exists := h.hub.GameService().GetTable(tableID)
+	if !exists {
+		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
+		return
+	}
+	stack, removed := table.LeavePlayerWithStack(claims.UserID)
+	if !removed {
+		response.Error(w, http.StatusConflict, "Jogador não está sentado nesta mesa")
+		return
+	}
 	if !h.releaseSeat(req.TableID, req.SeatNumber) {
 		response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 		return
 	}
-	if h.hub != nil {
-		if tableID, err := uuid.Parse(req.TableID); err == nil {
-			if table, exists := h.hub.GameService().GetTable(tableID); exists {
-				if stack, removed := table.LeavePlayerWithStack(claims.UserID); removed {
-					if user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email); exists {
-						h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
-						wallet, err := h.wallets.ReturnFromTable(user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
-						if err == nil {
-							user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
-							user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
-						}
-					}
-				}
-			}
+	if user != nil {
+		if _, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas); err != nil {
+			log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+			return
 		}
+		wallet, err := h.wallets.ReturnFromTable(r.Context(), user.ID, finance.ChipsToMoney(stack), req.TableID, claims.UserID.String()+":"+req.TableID+":return")
+		if err != nil {
+			log.Printf("Falha ao devolver saldo da mesa para o usuário %s: %v", user.ID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao devolver saldo da mesa")
+			return
+		}
+		user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
+		user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
 	}
 	response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -369,15 +396,25 @@ func (h *ModulesHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusUnauthorized, "Não autenticado")
 		return
 	}
-	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
-	if !exists {
-		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+	user, ok := h.userFromClaims(w, r, claims)
+	if !ok {
 		return
 	}
-	wallet := h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	wallet, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas)
+	if err != nil {
+		log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+		return
+	}
+	entries, err := h.wallets.Entries(r.Context(), user.ID)
+	if err != nil {
+		log.Printf("Falha ao carregar extrato do usuário %s: %v", user.ID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar extrato")
+		return
+	}
 	response.JSON(w, http.StatusOK, map[string]interface{}{
 		"wallet": wallet,
-		"ledger": h.wallets.Entries(user.ID),
+		"ledger": entries,
 	})
 }
 
@@ -396,15 +433,23 @@ func (h *ModulesHandler) DevDeposit(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Valor de depósito inválido")
 		return
 	}
-	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
-	if !exists {
-		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+	user, ok := h.userFromClaims(w, r, claims)
+	if !ok {
 		return
 	}
-	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
-	wallet, err := h.wallets.Deposit(user.ID, req.AmountCents, r.Header.Get("Idempotency-Key"))
+	if _, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas); err != nil {
+		log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+		return
+	}
+	wallet, err := h.wallets.Deposit(r.Context(), user.ID, req.AmountCents, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, finance.ErrInvalidAmount) {
+			response.Error(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("Falha ao depositar na carteira do usuário %s: %v", user.ID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao atualizar carteira")
+		}
 		return
 	}
 	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
@@ -415,8 +460,21 @@ func (h *ModulesHandler) DevDeposit(w http.ResponseWriter, r *http.Request) {
 // ReleaseSeat is also used by the websocket hub when a client disconnects.
 // It is intentionally idempotent so an explicit leave followed by disconnect
 // cannot leave stale occupancy or fail the cleanup.
-func (h *ModulesHandler) ReleaseSeat(tableID uuid.UUID, seatNumber int) {
+func (h *ModulesHandler) ReleaseSeat(tableID, userID uuid.UUID, seatNumber int, stack int64, playerRemoved bool) {
 	h.releaseSeat(tableID.String(), seatNumber)
+	if !playerRemoved || h.wallets == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := h.wallets.EnsureWallet(ctx, userID, 0); err != nil {
+		log.Printf("Falha ao carregar carteira do usuário %s ao sair da mesa: %v", userID, err)
+		return
+	}
+	key := userID.String() + ":" + tableID.String() + ":return"
+	if _, err := h.wallets.ReturnFromTable(ctx, userID, finance.ChipsToMoney(stack), tableID.String(), key); err != nil {
+		log.Printf("Falha ao devolver saldo da mesa para o usuário %s após desconexão: %v", userID, err)
+	}
 }
 
 func (h *ModulesHandler) releaseSeat(tableID string, seatNumber int) bool {
@@ -488,9 +546,8 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
-	if !exists {
-		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+	user, ok := h.userFromClaims(w, r, claims)
+	if !ok {
 		return
 	}
 
@@ -503,7 +560,11 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	if _, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas); err != nil {
+		log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+		return
+	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" && req.TableID != "" {
 		key = claims.UserID.String() + ":" + req.TableID + ":" + fmt.Sprint(req.SeatNumber)
@@ -530,18 +591,25 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 				response.Error(w, http.StatusInternalServerError, "Falha ao carregar mesa")
 				return
 			}
+			if tableConfig.Tipo == models.TableTypeTournament {
+				response.Error(w, http.StatusConflict, "Buy-in de torneio deve ser feito pela inscrição")
+				return
+			}
 			if req.SeatNumber < 1 || req.SeatNumber > tableConfig.MaxSeats || req.Amount < tableConfig.BuyInMin || req.Amount > tableConfig.BuyInMax {
 				response.Error(w, http.StatusBadRequest, "Buy-in ou assento inválido para esta mesa")
 				return
 			}
 
-			wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
+			wallet, err := h.wallets.BuyIn(r.Context(), user.ID, amountCents, req.TableID, key)
 			if err != nil {
 				if errors.Is(err, finance.ErrInsufficientFunds) {
 					response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
-					return
+				} else if errors.Is(err, finance.ErrInvalidAmount) {
+					response.Error(w, http.StatusBadRequest, err.Error())
+				} else {
+					log.Printf("Falha no buy-in do usuário %s: %v", user.ID, err)
+					response.Error(w, http.StatusInternalServerError, "Falha ao processar buy-in")
 				}
-				response.Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
 
@@ -551,7 +619,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 			}
 			game, _, updateErr := h.store.JoinPlayer(r.Context(), tableID, user.ID, playerName, req.SeatNumber, req.Amount)
 			if updateErr != nil {
-				if _, refundErr := h.wallets.RefundBuyIn(user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
+				if _, refundErr := h.wallets.RefundBuyIn(r.Context(), user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
 					log.Printf("Falha ao estornar buy-in após erro de persistência do jogo para %s: %v", user.ID, refundErr)
 					response.Error(w, http.StatusInternalServerError, "Entrada recusada e estorno pendente; contate o suporte")
 					return
@@ -602,14 +670,17 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tableConfig := h.tables[tableIndex]
-		wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
+		wallet, err := h.wallets.BuyIn(r.Context(), user.ID, amountCents, req.TableID, key)
 		if err != nil {
 			h.mu.Unlock()
-			if err == finance.ErrInsufficientFunds {
+			if errors.Is(err, finance.ErrInsufficientFunds) {
 				response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
-				return
+			} else if errors.Is(err, finance.ErrInvalidAmount) {
+				response.Error(w, http.StatusBadRequest, err.Error())
+			} else {
+				log.Printf("Falha no buy-in do usuário %s: %v", user.ID, err)
+				response.Error(w, http.StatusInternalServerError, "Falha ao processar buy-in")
 			}
-			response.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -620,7 +691,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		tableGame := h.hub.GameService().GetOrCreateTable(tableConfig.ID, tableConfig.SmallBlind, tableConfig.BigBlind)
 		if err := tableGame.JoinPlayer(user.ID, playerName, req.SeatNumber, req.Amount); err != nil {
 			h.mu.Unlock()
-			if _, refundErr := h.wallets.RefundBuyIn(user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
+			if _, refundErr := h.wallets.RefundBuyIn(r.Context(), user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
 				log.Printf("Falha ao estornar buy-in recusado do usuário %s: %v", user.ID, refundErr)
 				response.Error(w, http.StatusInternalServerError, "Entrada recusada e estorno pendente; contate o suporte")
 				return
@@ -638,13 +709,16 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		response.JSON(w, http.StatusOK, user)
 		return
 	}
-	wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
+	wallet, err := h.wallets.BuyIn(r.Context(), user.ID, amountCents, req.TableID, key)
 	if err != nil {
-		if err == finance.ErrInsufficientFunds {
+		if errors.Is(err, finance.ErrInsufficientFunds) {
 			response.Error(w, http.StatusBadRequest, "Saldo insuficiente para o buy-in")
-			return
+		} else if errors.Is(err, finance.ErrInvalidAmount) {
+			response.Error(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("Falha no buy-in do usuário %s: %v", user.ID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao processar buy-in")
 		}
-		response.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
@@ -666,9 +740,8 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Dados de recarga inválidos")
 		return
 	}
-	user, exists := h.authHandler.GetUserByIdentity(claims.Username, claims.Email)
-	if !exists {
-		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+	user, ok := h.userFromClaims(w, r, claims)
+	if !ok {
 		return
 	}
 	tableID, err := uuid.Parse(req.TableID)
@@ -686,6 +759,10 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("Falha ao carregar mesa para recarga: %v", err)
 			response.Error(w, http.StatusInternalServerError, "Falha ao carregar mesa")
+			return
+		}
+		if tableConfig.Tipo == models.TableTypeTournament {
+			response.Error(w, http.StatusConflict, "Recargas não estão disponíveis em torneios")
 			return
 		}
 	} else {
@@ -709,18 +786,25 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.wallets.EnsureWallet(user.ID, user.SaldoFichas)
+	if _, err := h.wallets.EnsureWallet(r.Context(), user.ID, user.SaldoFichas); err != nil {
+		log.Printf("Falha ao carregar carteira do usuário %s: %v", user.ID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao carregar carteira")
+		return
+	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" {
 		key = uuid.NewString()
 	}
-	wallet, err := h.wallets.BuyIn(user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key)
+	wallet, err := h.wallets.BuyIn(r.Context(), user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key)
 	if err != nil {
-		if err == finance.ErrInsufficientFunds {
+		if errors.Is(err, finance.ErrInsufficientFunds) {
 			response.Error(w, http.StatusBadRequest, "Saldo fora da mesa insuficiente para a recarga")
-			return
+		} else if errors.Is(err, finance.ErrInvalidAmount) {
+			response.Error(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("Falha na recarga do usuário %s: %v", user.ID, err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao processar recarga")
 		}
-		response.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var table *engine.TableGame
@@ -728,13 +812,17 @@ func (h *ModulesHandler) Rebuy(w http.ResponseWriter, r *http.Request) {
 		table, err = h.hub.UpdateGame(tableID, func(game *engine.TableGame) error {
 			return game.AddStack(user.ID, req.Amount, key)
 		})
-	} else if table, exists = h.hub.GameService().GetTable(tableID); !exists {
-		err = database.ErrTableNotFound
 	} else {
-		err = table.AddStack(user.ID, req.Amount, key)
+		var exists bool
+		table, exists = h.hub.GameService().GetTable(tableID)
+		if !exists {
+			err = database.ErrTableNotFound
+		} else {
+			err = table.AddStack(user.ID, req.Amount, key)
+		}
 	}
 	if err != nil {
-		if _, refundErr := h.wallets.RefundBuyIn(user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key+":rollback"); refundErr != nil {
+		if _, refundErr := h.wallets.RefundBuyIn(r.Context(), user.ID, finance.ChipsToMoney(req.Amount), req.TableID, key+":rollback"); refundErr != nil {
 			log.Printf("Falha ao estornar recarga recusada do usuário %s: %v", user.ID, refundErr)
 			response.Error(w, http.StatusInternalServerError, "Recarga recusada e estorno pendente; contate o suporte")
 			return

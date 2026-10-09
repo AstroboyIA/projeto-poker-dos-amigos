@@ -76,3 +76,37 @@ func TestUsernameOnlyRegistrationAndLogin(t *testing.T) {
 		t.Fatalf("duplicate registration status = %d, want %d", duplicateResponse.Code, http.StatusConflict)
 	}
 }
+
+func TestRegistrationRequiresUsernameWithoutSpaces(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		wantCode int
+	}{
+		{name: "missing", username: "", wantCode: http.StatusBadRequest},
+		{name: "contains space", username: "nome sobrenome", wantCode: http.StatusBadRequest},
+		{name: "contains unsupported punctuation", username: "nome.sobrenome", wantCode: http.StatusBadRequest},
+		{name: "hyphen separator", username: "nome-sobrenome", wantCode: http.StatusCreated},
+		{name: "underscore separator", username: "nome_sobrenome", wantCode: http.StatusCreated},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewAuthHandler(auth.NewTokenManager("test-secret"))
+			body, err := json.Marshal(map[string]interface{}{
+				"username":       test.username,
+				"senha":          "secret123",
+				"aceitou_termos": true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(string(body)))
+			response := httptest.NewRecorder()
+			handler.Register(response, request)
+			if response.Code != test.wantCode {
+				t.Fatalf("registration status = %d, want %d: %s", response.Code, test.wantCode, response.Body.String())
+			}
+		})
+	}
+}

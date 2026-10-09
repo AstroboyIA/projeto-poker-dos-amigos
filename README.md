@@ -118,9 +118,13 @@ As migrações em `backend/migrations` são carregadas automaticamente na primei
 
 O backend usa o PostgreSQL como fonte compartilhada para o lobby, assentos e estado das partidas. Configure `DATABASE_URL` no serviço do Render apontando para o PostgreSQL acessível pela aplicação, defina `APP_ENV=production` e use a mesma base em todas as instâncias do backend. Sem conexão com o banco, o servidor não inicia; em produção, não há fallback para um banco local.
 
-O schema base (`backend/migrations/001_init.sql` a `003_*`) precisa existir no banco. Ao iniciar, o backend aplica a migration `004_shared_table_state.sql`, que adiciona os campos e a tabela para persistir o estado das mesas. Atualizações são propagadas entre instâncias pelo PostgreSQL (`LISTEN/NOTIFY`).
+O schema base (`backend/migrations/001_init.sql`, `002_wallet_and_table_authority.sql` e `003_username_registration.sql`) precisa existir no banco. Não aplique `003_reset_player_chips.sql`, pois essa migration redefine saldos. Ao iniciar, o backend aplica as migrations internas `004_shared_table_state.sql`, `005_user_email_case_insensitive.sql`, `006_persistent_wallets.sql` e `007_single_table_tournaments.sql`.
 
-Esta mudança compartilha lobby e partidas; autenticação/usuários e carteiras ainda são mantidos em memória. Para operar várias instâncias sem afinidade de sessão e com saldos consistentes, esses módulos também precisam ser migrados para armazenamento compartilhado.
+Cadastros, autenticação e carteiras são persistidos no PostgreSQL. As tabelas `wallets` e `wallet_ledger` armazenam os saldos, reservas por mesa e histórico de transações; as alterações de saldo são transacionais e protegidas por chave de idempotência. Contas que existiam somente na memória antes desta mudança não podem ser recuperadas do banco; seus usuários precisam se cadastrar novamente. Para conceder acesso gerencial, registre a conta e altere `role` para `gerente` em `public.users` pela Table Editor do Supabase; depois, encerre a sessão e entre novamente para receber um token com a nova função. Saldos antigos são inicializados a partir de `users.saldo_fichas` na primeira criação da carteira.
+
+### Torneios Sit & Go
+
+Gerentes podem criar torneios de mesa única com 2 a 9 vagas, buy-in, stack inicial e blinds progressivos; os jogadores se inscrevem usando o saldo disponível, e o gerente inicia manualmente quando houver pelo menos dois inscritos. A premiação é a soma integral dos buy-ins e é creditada ao vencedor após a conclusão da partida. Inscrições, estado do torneio, blinds, eliminações, prêmio e extrato financeiro são persistidos no PostgreSQL.
 
 ### Backend (Go)
 ```bash
@@ -140,11 +144,7 @@ npm run dev
 
 ---
 
-## 🔑 Credenciais Pré-configuradas para Testes
+## Contas
 
-- **Sócios / Gerentes (Direitos Iguais)**:
-  - `jonatas@pokerdosamigos.com` | Senha: `poker123`
-  - `felipe@pokerdosamigos.com` | Senha: `poker123`
-- **Jogador Membro VIP**:
-  - `jogador@pokerdosamigos.com` | Senha: `jogador123`
+Crie uma conta pela tela de cadastro. As antigas contas de demonstração eram mantidas apenas em memória e não são criadas no banco automaticamente.
 # projeto-poker-dos-amigos

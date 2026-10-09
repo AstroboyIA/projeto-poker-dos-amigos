@@ -45,9 +45,11 @@ func main() {
 	go hub.Run()
 	go hub.ListenForSharedUpdates(context.Background())
 
-	authHandler := handlers.NewAuthHandler(tokenManager)
+	authHandler := handlers.NewAuthHandlerWithStore(tokenManager, store)
 	modulesHandler := handlers.NewModulesHandlerWithStore(hub, authHandler, store)
+	tournamentHandler := handlers.NewTournamentHandler(store, hub, authHandler)
 	hub.SetReleaseSeatHandler(modulesHandler.ReleaseSeat)
+	go tournamentHandler.Run(context.Background())
 
 	r := chi.NewRouter()
 
@@ -85,7 +87,8 @@ func main() {
 		r.Get("/api/auth/me", authHandler.Me)
 
 		// Módulos
-		r.Get("/api/tournaments", modulesHandler.GetTournaments)
+		r.Get("/api/tournaments", tournamentHandler.GetTournaments)
+		r.Post("/api/tournaments/{tournamentID}/register", tournamentHandler.Register)
 		r.Get("/api/rankings", modulesHandler.GetRankings)
 		r.Get("/api/tables", modulesHandler.GetTables)
 		r.Post("/api/tables", modulesHandler.CreateTable)
@@ -102,6 +105,8 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireManager)
 			r.Get("/api/financial/summary", modulesHandler.GetFinancialSummary)
+			r.Post("/api/tournaments", tournamentHandler.CreateTournament)
+			r.Post("/api/tournaments/{tournamentID}/start", tournamentHandler.Start)
 		})
 	})
 
