@@ -622,10 +622,10 @@ export const PokerTablePage: React.FC = () => {
       )}
 
       {/* 2. Feltro de Poker Central com 9 Jogadores e Fichas 3D Estáticas */}
-      <div className="my-2 grid w-full max-w-6xl flex-grow grid-cols-3 items-center justify-items-center gap-x-1 gap-y-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,5fr)_minmax(0,1fr)] lg:gap-x-3 lg:gap-y-3">
+      <div className="mx-auto my-2 grid w-full max-w-6xl flex-grow grid-cols-3 items-center justify-items-center gap-x-1 gap-y-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,5fr)_minmax(0,1fr)] lg:gap-x-3 lg:gap-y-3">
         {renderSeatGroup(
           [1, 2, 3],
-          'col-span-3 row-start-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-start-2',
+          'col-span-3 row-start-1 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-span-1 lg:col-start-2',
         )}
         {renderSeatGroup(
           [8, 9],
@@ -718,7 +718,7 @@ export const PokerTablePage: React.FC = () => {
         </div>
         {renderSeatGroup(
           [6, 7],
-          'col-span-3 row-start-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-start-2 lg:row-start-3',
+          'col-span-3 row-start-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2 lg:col-span-1 lg:col-start-2 lg:row-start-3',
         )}
       </div>
 
