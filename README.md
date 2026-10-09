@@ -124,7 +124,7 @@ Cadastros, autenticação e carteiras são persistidos no PostgreSQL. As tabelas
 
 ### Torneios Sit & Go
 
-Gerentes podem criar torneios de mesa única com 2 a 9 vagas, buy-in, stack inicial e blinds progressivos; os jogadores se inscrevem usando o saldo disponível, e o gerente inicia manualmente quando houver pelo menos dois inscritos. A premiação é a soma integral dos buy-ins e é creditada ao vencedor após a conclusão da partida. Inscrições, estado do torneio, blinds, eliminações, prêmio e extrato financeiro são persistidos no PostgreSQL.
+Jogadores e gerentes autenticados podem criar torneios de mesa única com 2 a 9 vagas, buy-in, stack inicial e blinds progressivos. Os jogadores se inscrevem usando o saldo disponível, e o início permanece controlado pelo gerente, que pode iniciar com pelo menos dois inscritos. A premiação é a soma integral dos buy-ins e é creditada ao vencedor após a conclusão da partida. Inscrições, estado do torneio, blinds, eliminações, prêmio e extrato financeiro são persistidos no PostgreSQL.
 
 ### Backend (Go)
 ```bash

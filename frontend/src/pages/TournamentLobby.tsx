@@ -80,18 +80,16 @@ export const TournamentLobbyPage: React.FC = () => {
           <button onClick={() => void loadTournaments()} disabled={loading} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-[#d4af37]/40 text-[#d4af37] text-xs font-bold">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Atualizar
           </button>
-          {isManager && (
-            <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#d4af37] text-black text-xs font-extrabold">
-              <Plus size={15} /> Criar torneio
-            </button>
-          )}
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#d4af37] text-black text-xs font-extrabold">
+            <Plus size={15} /> Criar torneio
+          </button>
         </div>
       </div>
 
       <header className="text-center space-y-2">
         <HeaderLogo />
         <h1 className="text-xl sm:text-3xl font-extrabold tracking-wider text-[#f5d77f] uppercase">Torneios Sit &amp; Go</h1>
-        <p className="text-xs sm:text-sm text-zinc-400">Mesa única, até 9 jogadores, início manual e premiação formada pelas inscrições.</p>
+        <p className="text-xs sm:text-sm text-zinc-400">Jogadores podem criar torneios de mesa única com até 9 vagas. O início é controlado pelo gerente e a premiação vem das inscrições.</p>
       </header>
 
       {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-950/50 p-3 text-sm text-red-200">{error}</p>}
@@ -100,7 +98,7 @@ export const TournamentLobbyPage: React.FC = () => {
         <p className="py-12 text-center text-zinc-400">Carregando torneios...</p>
       ) : tournaments.length === 0 ? (
         <div className="rounded-xl border border-[#d4af37]/30 bg-zinc-900/50 p-8 text-center text-zinc-300">
-          Nenhum torneio criado. {isManager ? 'Crie o primeiro Sit & Go.' : 'Aguarde a criação de um torneio pelo gerente.'}
+          Nenhum torneio criado. Crie o primeiro Sit & Go.
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">

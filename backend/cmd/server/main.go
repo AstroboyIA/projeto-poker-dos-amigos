@@ -88,6 +88,7 @@ func main() {
 
 		// Módulos
 		r.Get("/api/tournaments", tournamentHandler.GetTournaments)
+		r.Post("/api/tournaments", tournamentHandler.CreateTournament)
 		r.Post("/api/tournaments/{tournamentID}/register", tournamentHandler.Register)
 		r.Get("/api/rankings", modulesHandler.GetRankings)
 		r.Get("/api/tables", modulesHandler.GetTables)
@@ -105,7 +106,6 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireManager)
 			r.Get("/api/financial/summary", modulesHandler.GetFinancialSummary)
-			r.Post("/api/tournaments", tournamentHandler.CreateTournament)
 			r.Post("/api/tournaments/{tournamentID}/start", tournamentHandler.Start)
 		})
 	})
