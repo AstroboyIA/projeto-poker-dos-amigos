@@ -17,7 +17,12 @@ import (
 
 func TestOccupySeatValidatesPlayerSeat(t *testing.T) {
 	handler := NewModulesHandler(nil, nil)
-	tableID := handler.tables[0].ID.String()
+	tableID := uuid.New()
+	handler.tables = append(handler.tables, models.PokerTable{
+		ID:            tableID,
+		MaxSeats:      9,
+		OccupiedSeats: []int{1},
+	})
 
 	tests := []struct {
 		name       string
@@ -35,7 +40,7 @@ func TestOccupySeatValidatesPlayerSeat(t *testing.T) {
 			req := httptest.NewRequest(
 				http.MethodPost,
 				"/api/tables/occupy",
-				strings.NewReader(`{"table_id":"`+tableID+`","seat_number":`+strconv.Itoa(tt.seatNumber)+`}`),
+				strings.NewReader(`{"table_id":"`+tableID.String()+`","seat_number":`+strconv.Itoa(tt.seatNumber)+`}`),
 			)
 			rec := httptest.NewRecorder()
 
@@ -45,6 +50,13 @@ func TestOccupySeatValidatesPlayerSeat(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestNewModulesHandlerStartsWithNoTables(t *testing.T) {
+	handler := NewModulesHandler(nil, nil)
+	if len(handler.tables) != 0 {
+		t.Fatalf("initial table count = %d, want 0", len(handler.tables))
 	}
 }
 

@@ -25,62 +25,10 @@ type ModulesHandler struct {
 }
 
 func NewModulesHandler(hub *ws.Hub, authHandler *AuthHandler) *ModulesHandler {
-	seedTables := []models.PokerTable{
-		{
-			ID:            uuid.MustParse("a1111111-1111-1111-1111-111111111111"),
-			Nome:          "Mesa VIP Ouro #01 (Texas Hold'em)",
-			Tipo:          models.TableTypeCashGame,
-			SmallBlind:    25,
-			BigBlind:      50,
-			BuyInMin:      1000,
-			BuyInMax:      5000,
-			MaxSeats:      9,
-			Status:        models.TableStatusRunning,
-			CurrentPot:    1450,
-			OccupiedSeats: []int{1, 2, 4, 6},
-			CreatedBy:     "Clube",
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		},
-		{
-			ID:            uuid.MustParse("a2222222-2222-2222-2222-222222222222"),
-			Nome:          "Mesa dos Amigos Fechada",
-			Tipo:          models.TableTypeCashGame,
-			SmallBlind:    10,
-			BigBlind:      20,
-			BuyInMin:      400,
-			BuyInMax:      2000,
-			MaxSeats:      9,
-			Status:        models.TableStatusRunning,
-			CurrentPot:    320,
-			OccupiedSeats: []int{1, 4, 6},
-			Password:      "1234",
-			CreatedBy:     "Felipe",
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		},
-		{
-			ID:            uuid.MustParse("a3333333-3333-3333-3333-333333333333"),
-			Nome:          "Mesa Torneio Amigos Final Table",
-			Tipo:          models.TableTypeTournament,
-			SmallBlind:    500,
-			BigBlind:      1000,
-			BuyInMin:      0,
-			BuyInMax:      0,
-			MaxSeats:      9,
-			Status:        models.TableStatusRunning,
-			CurrentPot:    28000,
-			OccupiedSeats: []int{1, 2, 3, 4, 5, 6, 7, 8, 9},
-			CreatedBy:     "Diretoria",
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		},
-	}
-
 	return &ModulesHandler{
 		hub:         hub,
 		authHandler: authHandler,
-		tables:      seedTables,
+		tables:      make([]models.PokerTable, 0),
 		wallets:     finance.NewService(),
 	}
 }
