@@ -452,6 +452,7 @@ func (c *Client) handlePlayerAction(action string, amount int64) {
 	err := table.ProcessAction(c.UserID, actType, amount)
 	if err != nil {
 		log.Printf("Ação inválida do jogador %s: %v", c.Nome, err)
+		c.sendError(err.Error())
 		return
 	}
 
