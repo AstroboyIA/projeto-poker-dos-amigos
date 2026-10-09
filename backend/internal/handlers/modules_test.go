@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -8,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/engine"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
+	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/ws"
 )
 
 func TestOccupySeatValidatesPlayerSeat(t *testing.T) {
@@ -62,5 +66,55 @@ func TestReleaseSeatDeletesEmptyUserTable(t *testing.T) {
 		if table.ID == tableID {
 			t.Fatal("empty user-created table was not deleted")
 		}
+	}
+}
+
+func TestBuyInJoinsPlayerToGameTable(t *testing.T) {
+	authHandler := NewAuthHandler(auth.NewTokenManager("test-secret"))
+	user := authHandler.users["jogador"]
+	gameService := engine.NewGameService()
+	hub := ws.NewHub(gameService)
+	go hub.Run()
+	handler := NewModulesHandler(hub, authHandler)
+	tableID := uuid.New()
+	handler.tables = append(handler.tables, models.PokerTable{
+		ID:            tableID,
+		SmallBlind:    25,
+		BigBlind:      50,
+		BuyInMin:      1000,
+		BuyInMax:      5000,
+		MaxSeats:      9,
+		OccupiedSeats: []int{},
+		CreatedBy:     "Gerente",
+	})
+	claims := &auth.Claims{
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Nome:     user.NomeCompleto,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/chips/buy-in", strings.NewReader(
+		`{"amount":1500,"table_id":"`+tableID.String()+`","seat_number":3}`,
+	))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserContextKey, claims))
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	rec := httptest.NewRecorder()
+
+	handler.BuyIn(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("buy-in status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	state, exists := gameService.GetTable(tableID)
+	if !exists {
+		t.Fatal("buy-in succeeded without creating the game table")
+	}
+	publicState := state.GetPublicState()
+	if len(publicState.Players) != 1 ||
+		publicState.Players[0].UserID == nil ||
+		*publicState.Players[0].UserID != user.ID ||
+		publicState.Players[0].SeatNumber != 3 ||
+		publicState.Players[0].Stack != 1500 {
+		t.Fatalf("player was not seated in the game after buy-in: %+v", publicState.Players)
 	}
 }

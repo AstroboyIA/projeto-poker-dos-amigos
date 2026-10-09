@@ -449,6 +449,11 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 		key = claims.UserID.String() + ":" + req.TableID + ":" + fmt.Sprint(req.SeatNumber)
 	}
 	if req.TableID != "" {
+		if h.hub == nil || h.hub.GameService() == nil {
+			response.Error(w, http.StatusServiceUnavailable, "Serviço da mesa indisponível")
+			return
+		}
+
 		h.mu.Lock()
 		tableIndex := -1
 		for i, table := range h.tables {
@@ -474,6 +479,7 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusNotFound, "Mesa não encontrada")
 			return
 		}
+		tableConfig := h.tables[tableIndex]
 		wallet, err := h.wallets.BuyIn(user.ID, amountCents, req.TableID, key)
 		if err != nil {
 			h.mu.Unlock()
@@ -484,10 +490,27 @@ func (h *ModulesHandler) BuyIn(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
+
+		playerName := user.NomeCompleto
+		if playerName == "" {
+			playerName = user.Username
+		}
+		tableGame := h.hub.GameService().GetOrCreateTable(tableConfig.ID, tableConfig.SmallBlind, tableConfig.BigBlind)
+		if err := tableGame.JoinPlayer(user.ID, playerName, req.SeatNumber, req.Amount); err != nil {
+			h.mu.Unlock()
+			if _, refundErr := h.wallets.RefundBuyIn(user.ID, amountCents, req.TableID, key+":rollback"); refundErr != nil {
+				log.Printf("Falha ao estornar buy-in recusado do usuário %s: %v", user.ID, refundErr)
+				response.Error(w, http.StatusInternalServerError, "Entrada recusada e estorno pendente; contate o suporte")
+				return
+			}
+			response.Error(w, http.StatusConflict, err.Error())
+			return
+		}
 		h.tables[tableIndex].OccupiedSeats = append(h.tables[tableIndex].OccupiedSeats, req.SeatNumber)
 		h.tables[tableIndex].UpdatedAt = time.Now()
 		h.mu.Unlock()
 		h.broadcastTablesUpdate()
+		h.hub.TableChanged(tableConfig.ID, tableGame)
 		user.SaldoFichas = finance.MoneyToChips(wallet.AvailableCents)
 		user.Wallet = &models.WalletSummary{BalanceCents: wallet.BalanceCents, AvailableCents: wallet.AvailableCents, ReservedCents: wallet.ReservedCents}
 		response.JSON(w, http.StatusOK, user)
