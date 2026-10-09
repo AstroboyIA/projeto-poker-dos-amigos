@@ -187,7 +187,7 @@ export const TournamentLobbyPage: React.FC = () => {
 
               {tournament.status === 'concluido' && (
                 <p className="rounded-lg bg-amber-950/40 p-3 text-center text-xs text-amber-100">
-                  Vencedor: {tournament.winner_name || tournament.winner_user_id || '—'} · prêmio {tournament.garantido.toLocaleString('pt-BR')} fichas
+                  Vencedor: {tournament.winner_name || tournament.winner_user_id || '—'} · recebeu {tournament.winner_prize.toLocaleString('pt-BR')} fichas
                 </p>
               )}
             </article>

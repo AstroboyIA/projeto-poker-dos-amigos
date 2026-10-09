@@ -30,7 +30,9 @@ func (s *Store) ListTournaments(ctx context.Context, userID uuid.UUID) ([]models
 		SELECT t.id, t.nome, t.buy_in, t.prize_pool, t.max_inscritos, t.data_inicio,
 			t.status, t.blind_interval_min, t.starting_stack,
 			COALESCE(pt.small_blind, t.small_blind), COALESCE(pt.big_blind, t.big_blind),
-			t.table_id, pt.creator_user_id, t.winner_user_id, COALESCE(w.nome_completo, w.username, ''),
+			t.table_id, pt.creator_user_id, t.winner_user_id,
+			COALESCE(NULLIF(w.nome_completo, ''), NULLIF(w.username, ''), ''),
+			COALESCE(we.prize_cents, 0),
 			t.blind_level, t.started_at, t.finished_at,
 			COUNT(e.user_id)::INT,
 			COALESCE(MAX(e.status) FILTER (WHERE e.user_id = $1), ''),
@@ -40,6 +42,7 @@ func (s *Store) ListTournaments(ctx context.Context, userID uuid.UUID) ([]models
 		LEFT JOIN tournament_entries e ON e.tournament_id = t.id
 		LEFT JOIN poker_tables pt ON pt.id = t.table_id
 		LEFT JOIN users w ON w.id = t.winner_user_id
+		LEFT JOIN tournament_entries we ON we.tournament_id = t.id AND we.user_id = t.winner_user_id
 		GROUP BY t.id, pt.small_blind, pt.big_blind, pt.creator_user_id, w.nome_completo, w.username
 		ORDER BY t.data_inicio DESC, t.created_at DESC
 	`, userID)
@@ -58,7 +61,8 @@ func (s *Store) ListTournaments(ctx context.Context, userID uuid.UUID) ([]models
 			&tournament.ID, &tournament.Nome, &tournament.BuyIn, &tournament.Garantido,
 			&tournament.MaxInscritos, &tournament.DataInicio, &tournament.Status,
 			&tournament.BlindInterval, &tournament.StartingStack, &tournament.SmallBlind,
-			&tournament.BigBlind, &tableID, &creatorID, &winnerID, &tournament.WinnerName, &tournament.BlindLevel,
+			&tournament.BigBlind, &tableID, &creatorID, &winnerID, &tournament.WinnerName,
+			&tournament.WinnerPrize, &tournament.BlindLevel,
 			&startedAt, &finishedAt, &tournament.Inscritos, &tournament.CurrentUserStatus, &currentSeat,
 			&tournament.CurrentUserEntry,
 		); err != nil {

@@ -63,6 +63,7 @@ export interface Tournament {
   creator_user_id?: string;
   winner_user_id?: string;
   winner_name?: string;
+  winner_prize: number;
   blind_level: number;
   current_user_seat?: number;
   current_user_entry: boolean;

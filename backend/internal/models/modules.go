@@ -24,6 +24,7 @@ type Tournament struct {
 	CreatorUserID     *uuid.UUID `json:"creator_user_id,omitempty"`
 	WinnerUserID      *uuid.UUID `json:"winner_user_id,omitempty"`
 	WinnerName        string     `json:"winner_name,omitempty"`
+	WinnerPrize       int64      `json:"winner_prize"`
 	BlindLevel        int        `json:"blind_level"`
 	CurrentUserSeat   *int       `json:"current_user_seat,omitempty"`
 	CurrentUserEntry  bool       `json:"current_user_entry"`
