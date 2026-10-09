@@ -145,16 +145,52 @@ func (h *TournamentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *TournamentHandler) Start(w http.ResponseWriter, r *http.Request) {
+func (h *TournamentHandler) Leave(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
 	tournamentID, err := uuid.Parse(chi.URLParam(r, "tournamentID"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "Torneio inválido")
 		return
 	}
-	game, err := h.store.StartTournament(r.Context(), tournamentID)
+	err = h.store.LeaveTournament(r.Context(), tournamentID, claims.UserID)
 	switch {
 	case errors.Is(err, database.ErrTournamentNotFound):
 		response.Error(w, http.StatusNotFound, "Torneio não encontrado")
+	case errors.Is(err, database.ErrTournamentClosed):
+		response.Error(w, http.StatusConflict, "Não é possível sair de um torneio já iniciado")
+	case errors.Is(err, database.ErrTournamentEntry):
+		response.Error(w, http.StatusConflict, "Você não está inscrito nem é o criador deste torneio")
+	case errors.Is(err, database.ErrTournamentSuccessor):
+		response.Error(w, http.StatusConflict, "Outro jogador precisa se inscrever antes de transferir o controle do torneio")
+	case err != nil:
+		log.Printf("Falha ao sair do torneio %s: %v", tournamentID, err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao sair do torneio")
+	default:
+		response.JSON(w, http.StatusOK, map[string]string{"status": "left"})
+	}
+}
+
+func (h *TournamentHandler) Start(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Não autenticado")
+		return
+	}
+	tournamentID, err := uuid.Parse(chi.URLParam(r, "tournamentID"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Torneio inválido")
+		return
+	}
+	game, err := h.store.StartTournament(r.Context(), tournamentID, claims.UserID)
+	switch {
+	case errors.Is(err, database.ErrTournamentNotFound):
+		response.Error(w, http.StatusNotFound, "Torneio não encontrado")
+	case errors.Is(err, database.ErrTournamentForbidden):
+		response.Error(w, http.StatusForbidden, "Somente o dono atual do torneio pode iniciá-lo")
 	case errors.Is(err, database.ErrTournamentPlayers):
 		response.Error(w, http.StatusConflict, "São necessários ao menos dois jogadores inscritos")
 	case errors.Is(err, database.ErrTournamentStart), errors.Is(err, database.ErrTournamentClosed):

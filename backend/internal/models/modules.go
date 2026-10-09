@@ -8,27 +8,28 @@ import (
 
 // Torneio
 type Tournament struct {
-	ID               uuid.UUID  `json:"id"`
-	Nome             string     `json:"nome"`
-	BuyIn            int64      `json:"buy_in"`
-	Garantido        int64      `json:"garantido"`
-	Inscritos        int        `json:"inscritos"`
-	MaxInscritos     int        `json:"max_inscritos"`
-	DataInicio       time.Time  `json:"data_inicio"`
-	Status           string     `json:"status"`
-	BlindInterval    int        `json:"blind_interval_min"`
-	StartingStack    int64      `json:"starting_stack"`
-	SmallBlind       int64      `json:"small_blind"`
-	BigBlind         int64      `json:"big_blind"`
-	TableID          *uuid.UUID `json:"table_id,omitempty"`
-	WinnerUserID     *uuid.UUID `json:"winner_user_id,omitempty"`
-	WinnerName       string     `json:"winner_name,omitempty"`
-	BlindLevel       int        `json:"blind_level"`
-	CurrentUserSeat  *int       `json:"current_user_seat,omitempty"`
-	CurrentUserEntry bool       `json:"current_user_entry"`
-	CurrentUserStatus string    `json:"current_user_status,omitempty"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	ID                uuid.UUID  `json:"id"`
+	Nome              string     `json:"nome"`
+	BuyIn             int64      `json:"buy_in"`
+	Garantido         int64      `json:"garantido"`
+	Inscritos         int        `json:"inscritos"`
+	MaxInscritos      int        `json:"max_inscritos"`
+	DataInicio        time.Time  `json:"data_inicio"`
+	Status            string     `json:"status"`
+	BlindInterval     int        `json:"blind_interval_min"`
+	StartingStack     int64      `json:"starting_stack"`
+	SmallBlind        int64      `json:"small_blind"`
+	BigBlind          int64      `json:"big_blind"`
+	TableID           *uuid.UUID `json:"table_id,omitempty"`
+	CreatorUserID     *uuid.UUID `json:"creator_user_id,omitempty"`
+	WinnerUserID      *uuid.UUID `json:"winner_user_id,omitempty"`
+	WinnerName        string     `json:"winner_name,omitempty"`
+	BlindLevel        int        `json:"blind_level"`
+	CurrentUserSeat   *int       `json:"current_user_seat,omitempty"`
+	CurrentUserEntry  bool       `json:"current_user_entry"`
+	CurrentUserStatus string     `json:"current_user_status,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
 // Ranking

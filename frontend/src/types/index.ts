@@ -60,6 +60,7 @@ export interface Tournament {
   small_blind: number;
   big_blind: number;
   table_id?: string;
+  creator_user_id?: string;
   winner_user_id?: string;
   winner_name?: string;
   blind_level: number;

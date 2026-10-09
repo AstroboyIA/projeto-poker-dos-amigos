@@ -14,7 +14,6 @@ export const TournamentLobbyPage: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [busyID, setBusyID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const isManager = user?.role === 'gerente' || user?.role === 'admin_gerente';
 
   const loadTournaments = useCallback(async () => {
     if (!token) return;
@@ -64,6 +63,26 @@ export const TournamentLobbyPage: React.FC = () => {
     }
   };
 
+  const leave = async (tournament: Tournament) => {
+    if (!token || busyID) return;
+    const isOwner = tournament.creator_user_id === user?.id;
+    const confirmation = isOwner
+      ? 'Ao sair, o controle do torneio será transferido ao inscrito mais antigo e seu buy-in será devolvido, se estiver inscrito. Continuar?'
+      : 'Ao sair, sua inscrição será cancelada e o buy-in devolvido. Continuar?';
+    if (!window.confirm(confirmation)) return;
+    setBusyID(tournament.id);
+    setError(null);
+    try {
+      await api.leaveTournament(token, tournament.id);
+      await refreshUser();
+      await loadTournaments();
+    } catch (leaveError) {
+      setError(leaveError instanceof Error ? leaveError.message : 'Falha ao sair do torneio');
+    } finally {
+      setBusyID(null);
+    }
+  };
+
   const enter = (tournament: Tournament) => {
     if (tournament.table_id && tournament.current_user_seat) {
       navigate(`/table/live?tableId=${tournament.table_id}&seat=${tournament.current_user_seat}&buyIn=${tournament.starting_stack}&mode=tournament`);
@@ -89,7 +108,7 @@ export const TournamentLobbyPage: React.FC = () => {
       <header className="text-center space-y-2">
         <HeaderLogo />
         <h1 className="text-xl sm:text-3xl font-extrabold tracking-wider text-[#f5d77f] uppercase">Torneios Sit &amp; Go</h1>
-        <p className="text-xs sm:text-sm text-zinc-400">Jogadores podem criar torneios de mesa única com até 9 vagas. O início é controlado pelo gerente e a premiação vem das inscrições.</p>
+        <p className="text-xs sm:text-sm text-zinc-400">Jogadores podem criar torneios de mesa única com até 9 vagas. O dono da sala inicia; se sair antes, o controle passa ao inscrito mais antigo.</p>
       </header>
 
       {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-950/50 p-3 text-sm text-red-200">{error}</p>}
@@ -134,7 +153,16 @@ export const TournamentLobbyPage: React.FC = () => {
                       {busyID === tournament.id ? 'Processando...' : `Inscrever-se · ${tournament.buy_in.toLocaleString('pt-BR')} fichas`}
                     </button>
                   )}
-                  {isManager && (
+                  {(tournament.current_user_entry || tournament.creator_user_id === user?.id) && (
+                    <button
+                      onClick={() => void leave(tournament)}
+                      disabled={busyID !== null}
+                      className="rounded-lg border border-red-500/50 px-3 py-2 text-xs font-bold text-red-200 disabled:opacity-50"
+                    >
+                      {tournament.creator_user_id === user?.id ? 'Sair e transferir' : 'Sair do torneio'}
+                    </button>
+                  )}
+                  {tournament.creator_user_id === user?.id && (
                     <button
                       onClick={() => void start(tournament)}
                       disabled={busyID !== null || tournament.inscritos < 2}

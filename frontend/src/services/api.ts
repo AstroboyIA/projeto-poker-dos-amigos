@@ -88,6 +88,15 @@ export const api = {
     return data.data;
   },
 
+  async leaveTournament(token: string, tournamentId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/leave`, {
+      method: 'POST',
+      headers: { Authorization: ['Bearer', token].join(' ') },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao sair do torneio');
+  },
+
   async startTournament(token: string, tournamentId: string): Promise<void> {
     const res = await fetch(`${API_BASE}/tournaments/${tournamentId}/start`, {
       method: 'POST',
