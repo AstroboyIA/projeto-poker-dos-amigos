@@ -111,10 +111,10 @@ export const ManagerDashboard: React.FC = () => {
     {
       id: 'configuracoes',
       title: 'CONFIGURAÇÕES',
-      desc: 'Ajustes e preferências do sistema',
+      desc: 'Dados pessoais e segurança da conta',
       icon: Settings,
       color: 'from-zinc-700 to-zinc-900',
-      action: () => setSelectedModule('Configurações Gerais do Sistema'),
+      action: () => navigate('/account/settings'),
     },
   ];
 

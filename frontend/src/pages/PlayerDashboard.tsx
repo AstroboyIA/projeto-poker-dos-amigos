@@ -114,7 +114,7 @@ export const PlayerDashboard: React.FC = () => {
       desc: 'Atualize os dados da sua conta',
       icon: Settings,
       color: 'from-zinc-700 to-zinc-900',
-      action: () => navigate('/player/settings'),
+      action: () => navigate('/account/settings'),
     },
   ];
 

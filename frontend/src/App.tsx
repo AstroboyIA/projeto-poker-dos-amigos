@@ -81,6 +81,7 @@ export function App() {
           />
           <Route path="/wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="/player/history" element={<ProtectedRoute><PlayerHistoryPage /></ProtectedRoute>} />
+          <Route path="/account/settings" element={<ProtectedRoute><PlayerSettingsPage /></ProtectedRoute>} />
           <Route path="/player/settings" element={<ProtectedRoute><PlayerSettingsPage /></ProtectedRoute>} />
           <Route path="/tournaments" element={<ProtectedRoute><TournamentLobbyPage /></ProtectedRoute>} />
           <Route path="/tournaments/:tournamentId/room" element={<ProtectedRoute><TournamentRoomPage /></ProtectedRoute>} />
