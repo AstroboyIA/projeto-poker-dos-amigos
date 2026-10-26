@@ -62,6 +62,19 @@ export const api = {
     return data.data;
   },
 
+  async changePassword(token: string, senhaAtual: string, novaSenha: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/auth/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+      },
+      body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: novaSenha }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao alterar senha');
+  },
+
   async getTournaments(token: string): Promise<Tournament[]> {
     const res = await fetch(`${API_BASE}/tournaments`, {
       headers: { Authorization: `Bearer ${token}` },

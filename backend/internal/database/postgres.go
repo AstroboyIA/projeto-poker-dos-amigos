@@ -22,12 +22,13 @@ import (
 const notificationChannel = "poker_table_updates"
 
 var (
-	ErrTableNotFound = errors.New("table not found")
-	ErrSeatOccupied  = errors.New("seat is already occupied")
-	ErrInvalidSeat   = errors.New("invalid seat number")
-	ErrUserNotFound  = errors.New("user not found")
-	ErrUsernameTaken = errors.New("username is already registered")
-	ErrEmailTaken    = errors.New("email is already registered")
+	ErrTableNotFound   = errors.New("table not found")
+	ErrSeatOccupied    = errors.New("seat is already occupied")
+	ErrInvalidSeat     = errors.New("invalid seat number")
+	ErrUserNotFound    = errors.New("user not found")
+	ErrUsernameTaken   = errors.New("username is already registered")
+	ErrEmailTaken      = errors.New("email is already registered")
+	ErrPasswordChanged = errors.New("password changed during update")
 )
 
 //go:embed migrations/004_shared_table_state.sql
@@ -491,6 +492,20 @@ func (s *Store) UpdateUserProfile(ctx context.Context, userID uuid.UUID, profile
 		return nil, fmt.Errorf("update user profile: %w", err)
 	}
 	return user, nil
+}
+
+func (s *Store) UpdateUserPassword(ctx context.Context, userID uuid.UUID, currentHash, newHash string) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE users SET password_hash = $3, updated_at = NOW()
+		WHERE id = $1 AND password_hash = $2
+	`, userID, currentHash, newHash)
+	if err != nil {
+		return fmt.Errorf("update user password: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrPasswordChanged
+	}
+	return nil
 }
 
 func scanUser(row pgx.Row, user *models.User) error {

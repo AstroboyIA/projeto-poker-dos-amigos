@@ -71,6 +71,11 @@ type UserProfileUpdate struct {
 	CidadeEstado string `json:"cidade_estado"`
 }
 
+type ChangePasswordRequest struct {
+	SenhaAtual string `json:"senha_atual"`
+	NovaSenha  string `json:"nova_senha"`
+}
+
 type AuthResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`

@@ -74,6 +74,41 @@ func TestUpdateProfileRejectsOversizedFields(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRequiresCurrentPasswordAndUpdatesCredentials(t *testing.T) {
+	tokenManager := auth.NewTokenManager("test-secret")
+	handler := NewAuthHandler(tokenManager)
+	user := handler.users["jogador"]
+	token, _, err := tokenManager.GenerateToken(user, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+
+	change := func(current, next string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(models.ChangePasswordRequest{SenhaAtual: current, NovaSenha: next})
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodPut, "/api/auth/password", strings.NewReader(string(body)))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		tokenManager.AuthMiddleware(http.HandlerFunc(handler.ChangePassword)).ServeHTTP(response, request)
+		return response
+	}
+
+	if response := change("wrong-password", "new-secure-pass"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("incorrect current password status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	if response := change("jogador123", "short"); response.Code != http.StatusBadRequest {
+		t.Fatalf("short new password status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if response := change("jogador123", "new-secure-pass"); response.Code != http.StatusOK {
+		t.Fatalf("change password status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if auth.CheckPasswordHash("jogador123", user.PasswordHash) || !auth.CheckPasswordHash("new-secure-pass", user.PasswordHash) {
+		t.Fatal("password hash was not updated correctly")
+	}
+}
+
 func TestUsernameOnlyRegistrationAndLogin(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret")
 	handler := NewAuthHandler(tokenManager)

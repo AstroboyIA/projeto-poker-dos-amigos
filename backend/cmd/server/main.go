@@ -86,6 +86,7 @@ func main() {
 
 		r.Get("/api/auth/me", authHandler.Me)
 		r.Put("/api/auth/profile", authHandler.UpdateProfile)
+		r.Put("/api/auth/password", authHandler.ChangePassword)
 
 		// Módulos
 		r.Get("/api/tournaments", tournamentHandler.GetTournaments)

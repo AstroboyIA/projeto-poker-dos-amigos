@@ -450,6 +450,107 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Usuário não autenticado")
+		return
+	}
+
+	var req models.ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Dados de senha inválidos")
+		return
+	}
+	if req.SenhaAtual == "" || len([]byte(req.NovaSenha)) < 8 || len([]byte(req.NovaSenha)) > 72 {
+		response.Error(w, http.StatusBadRequest, "Informe a senha atual e uma nova senha com 8 a 72 bytes")
+		return
+	}
+	if req.SenhaAtual == req.NovaSenha {
+		response.Error(w, http.StatusBadRequest, "A nova senha deve ser diferente da senha atual")
+		return
+	}
+
+	var user *models.User
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		user, err = h.store.GetUserByID(ctx, claims.UserID)
+		if err != nil {
+			if errors.Is(err, database.ErrUserNotFound) {
+				response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+				return
+			}
+			log.Printf("Falha ao consultar usuário para troca de senha: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao validar a senha atual")
+			return
+		}
+	} else {
+		h.mu.RLock()
+		for _, storedUser := range h.users {
+			if storedUser.ID == claims.UserID {
+				userCopy := *storedUser
+				user = &userCopy
+				break
+			}
+		}
+		h.mu.RUnlock()
+	}
+	if user == nil {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+	if !auth.CheckPasswordHash(req.SenhaAtual, user.PasswordHash) {
+		response.Error(w, http.StatusUnauthorized, "Senha atual incorreta")
+		return
+	}
+
+	newHash, err := auth.HashPassword(req.NovaSenha)
+	if err != nil {
+		log.Printf("Falha ao gerar hash da nova senha: %v", err)
+		response.Error(w, http.StatusInternalServerError, "Falha ao atualizar senha")
+		return
+	}
+
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		err = h.store.UpdateUserPassword(ctx, claims.UserID, user.PasswordHash, newHash)
+		if errors.Is(err, database.ErrPasswordChanged) {
+			response.Error(w, http.StatusUnauthorized, "A senha da conta foi alterada. Entre novamente e tente de novo.")
+			return
+		}
+		if err != nil {
+			log.Printf("Falha ao salvar nova senha: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao atualizar senha")
+			return
+		}
+	} else {
+		h.mu.Lock()
+		var updated bool
+		for _, storedUser := range h.users {
+			if storedUser.ID != claims.UserID {
+				continue
+			}
+			if storedUser.PasswordHash != user.PasswordHash {
+				break
+			}
+			storedUser.PasswordHash = newHash
+			storedUser.UpdatedAt = time.Now()
+			updated = true
+			break
+		}
+		h.mu.Unlock()
+		if !updated {
+			response.Error(w, http.StatusUnauthorized, "A senha da conta foi alterada. Entre novamente e tente de novo.")
+			return
+		}
+	}
+
+	response.JSON(w, http.StatusOK, map[string]string{"message": "Senha atualizada com sucesso"})
+}
+
 func (h *AuthHandler) GetUserByEmail(email string) (*models.User, bool) {
 	if h.store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
