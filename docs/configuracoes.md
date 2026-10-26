@@ -7,7 +7,8 @@ O menu está disponível para jogadores e gerentes pelo atalho **CONFIGURAÇÕES
 ### Conta
 
 - Exibe username e e-mail como informações somente leitura.
-- Permite editar nome completo, telefone, data de nascimento e cidade/estado.
+- Permite editar nome completo, telefone e data de nascimento.
+- A localização é selecionada em caixas encadeadas: primeiro estado, depois cidade correspondente, carregadas pela API pública do IBGE. A informação é salva no formato `Cidade/UF`. É necessária conexão à internet para carregar as opções.
 - Salva os dados no backend e atualiza o usuário da sessão.
 - Permite trocar a senha informando a senha atual, uma nova senha e sua confirmação.
 - A nova senha deve ter entre 8 e 72 bytes; o backend verifica a senha atual e armazena a nova com bcrypt.
@@ -23,4 +24,3 @@ Esses tópicos já aparecem na navegação e mostram informações introdutória
 - Atualização de dados da conta: `PUT /api/auth/profile`
 - Troca de senha: `PUT /api/auth/password`
 - As duas rotas da API exigem autenticação.
-

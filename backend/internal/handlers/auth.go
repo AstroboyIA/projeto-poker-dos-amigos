@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,11 @@ import (
 )
 
 const initialPlayerChips int64 = 1_000_000
+
+var (
+	brazilianPhonePattern = regexp.MustCompile(`^\(\d{2}\) (?:\d{4}|\d{5})-\d{4}$`)
+	birthDatePattern      = regexp.MustCompile(`^\d{2}/\d{2}/\d{4}$`)
+)
 
 type AuthHandler struct {
 	tokenManager *auth.TokenManager
@@ -385,6 +391,21 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	profile.Telefone = strings.TrimSpace(profile.Telefone)
 	profile.DataNasc = strings.TrimSpace(profile.DataNasc)
 	profile.CidadeEstado = strings.TrimSpace(profile.CidadeEstado)
+	if profile.Telefone != "" && !brazilianPhonePattern.MatchString(profile.Telefone) {
+		response.Error(w, http.StatusBadRequest, "Telefone deve estar no formato (00) 00000-0000 ou (00) 0000-0000")
+		return
+	}
+	if profile.DataNasc != "" {
+		if !birthDatePattern.MatchString(profile.DataNasc) {
+			response.Error(w, http.StatusBadRequest, "Data de nascimento deve estar no formato DD/MM/AAAA")
+			return
+		}
+		birthDate, err := time.Parse("02/01/2006", profile.DataNasc)
+		if err != nil || birthDate.After(time.Now()) {
+			response.Error(w, http.StatusBadRequest, "Informe uma data de nascimento válida e não futura")
+			return
+		}
+	}
 	if len([]rune(profile.NomeCompleto)) > 255 ||
 		len([]rune(profile.Telefone)) > 50 ||
 		len([]rune(profile.DataNasc)) > 20 ||

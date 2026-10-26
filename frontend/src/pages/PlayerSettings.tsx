@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -24,14 +24,66 @@ const settingsTopics = [
   { id: 'privacy', label: 'Privacidade', description: 'Sessão e dados', icon: Shield },
 ] as const;
 
+const formatPhone = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  if (digits.length <= 2) return digits ? `(${digits}` : '';
+
+  const areaCode = digits.slice(0, 2);
+  const localNumber = digits.slice(2);
+  const prefixLength = digits.length > 10 ? 5 : 4;
+  const prefix = localNumber.slice(0, prefixLength);
+  const suffix = localNumber.slice(prefixLength, prefixLength + 4);
+  return `(${areaCode}) ${prefix}${suffix ? `-${suffix}` : ''}`;
+};
+
+const formatBirthDate = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+const isValidBirthDate = (value: string) => {
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return false;
+  const [day, month, year] = value.split('/').map(Number);
+  const date = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return date.getFullYear() === year && date.getMonth() === month - 1 &&
+    date.getDate() === day && date <= today;
+};
+
+interface BrazilianState {
+  id: number;
+  sigla: string;
+  nome: string;
+}
+
+interface BrazilianCity {
+  id: number;
+  nome: string;
+}
+
+const parseCityState = (value: string) => {
+  const match = value.match(/^(.*?)\s*\/\s*([A-Z]{2})$/);
+  return match ? { city: match[1].trim(), state: match[2] } : { city: '', state: '' };
+};
+
 export const PlayerSettingsPage: React.FC = () => {
   const { user, token, updateSession } = useAuth();
   const navigate = useNavigate();
+  const savedLocation = parseCityState(user?.cidade_estado ?? '');
   const [activeTopic, setActiveTopic] = useState<string>('account');
   const [nomeCompleto, setNomeCompleto] = useState(user?.nome_completo ?? '');
   const [telefone, setTelefone] = useState(user?.telefone ?? '');
   const [dataNascimento, setDataNascimento] = useState(user?.data_nascimento ?? '');
-  const [cidadeEstado, setCidadeEstado] = useState(user?.cidade_estado ?? '');
+  const [selectedState, setSelectedState] = useState(savedLocation.state);
+  const [selectedCity, setSelectedCity] = useState(savedLocation.city);
+  const [states, setStates] = useState<BrazilianState[]>([]);
+  const [cities, setCities] = useState<BrazilianCity[]>([]);
+  const [loadingStates, setLoadingStates] = useState(true);
+  const [loadingCities, setLoadingCities] = useState(Boolean(savedLocation.state));
+  const [locationError, setLocationError] = useState('');
   const [senhaAtual, setSenhaAtual] = useState('');
   const [novaSenha, setNovaSenha] = useState('');
   const [confirmarSenha, setConfirmarSenha] = useState('');
@@ -42,8 +94,75 @@ export const PlayerSettingsPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadStates = async () => {
+      try {
+        const response = await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome', {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Não foi possível carregar a lista de estados.');
+        const data: BrazilianState[] = await response.json();
+        setStates(data);
+        if (savedLocation.state && !data.some((state) => state.sigla === savedLocation.state)) {
+          setSelectedState('');
+          setSelectedCity('');
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setLocationError(err instanceof Error ? err.message : 'Falha ao carregar estados.');
+      } finally {
+        if (!controller.signal.aborted) setLoadingStates(false);
+      }
+    };
+    void loadStates();
+    return () => controller.abort();
+  }, [savedLocation.state]);
+
+  useEffect(() => {
+    if (!selectedState) return;
+
+    const controller = new AbortController();
+    const loadCities = async () => {
+      setLocationError('');
+      try {
+        const response = await fetch(
+          `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${selectedState}/municipios?orderBy=nome`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error('Não foi possível carregar as cidades deste estado.');
+        const data: BrazilianCity[] = await response.json();
+        setCities(data);
+        setSelectedCity((currentCity) => data.some((city) => city.nome === currentCity) ? currentCity : '');
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setCities([]);
+        setLocationError(err instanceof Error ? err.message : 'Falha ao carregar cidades.');
+      } finally {
+        if (!controller.signal.aborted) setLoadingCities(false);
+      }
+    };
+    void loadCities();
+    return () => controller.abort();
+  }, [selectedState]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (telefone && !/^\(\d{2}\) (?:\d{4}|\d{5})-\d{4}$/.test(telefone)) {
+      setError('Informe um telefone válido no formato (00) 00000-0000.');
+      setSuccess('');
+      return;
+    }
+    if (dataNascimento && !isValidBirthDate(dataNascimento)) {
+      setError('Informe uma data válida no formato DD/MM/AAAA, que não seja futura.');
+      setSuccess('');
+      return;
+    }
+    if ((selectedState && !selectedCity) || (!selectedState && selectedCity)) {
+      setError('Selecione primeiro o estado e depois a cidade.');
+      setSuccess('');
+      return;
+    }
     if (!token) {
       setError('Sua sessão expirou. Entre novamente para salvar as alterações.');
       return;
@@ -57,7 +176,7 @@ export const PlayerSettingsPage: React.FC = () => {
         nome_completo: nomeCompleto.trim(),
         telefone: telefone.trim(),
         data_nascimento: dataNascimento.trim(),
-        cidade_estado: cidadeEstado.trim(),
+        cidade_estado: selectedCity && selectedState ? `${selectedCity}/${selectedState}` : '',
       });
       updateSession(updatedSession.token, updatedSession.user);
       setSuccess('Dados da conta atualizados.');
@@ -168,10 +287,13 @@ export const PlayerSettingsPage: React.FC = () => {
                     <label className="block space-y-1.5">
                       <span className="text-sm text-zinc-300">Telefone</span>
                       <input
+                        type="tel"
                         value={telefone}
-                        onChange={(event) => setTelefone(event.target.value)}
-                        maxLength={50}
+                        onChange={(event) => setTelefone(formatPhone(event.target.value))}
+                        maxLength={15}
+                        inputMode="numeric"
                         autoComplete="tel"
+                        placeholder="(00) 00000-0000"
                         className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white outline-none focus:border-[#d4af37]"
                       />
                     </label>
@@ -179,24 +301,54 @@ export const PlayerSettingsPage: React.FC = () => {
                       <span className="text-sm text-zinc-300">Data de nascimento</span>
                       <input
                         value={dataNascimento}
-                        onChange={(event) => setDataNascimento(event.target.value)}
-                        maxLength={20}
+                        onChange={(event) => setDataNascimento(formatBirthDate(event.target.value))}
+                        maxLength={10}
+                        inputMode="numeric"
                         placeholder="DD/MM/AAAA"
                         autoComplete="bday"
                         className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white outline-none focus:border-[#d4af37]"
                       />
                     </label>
                   </div>
-                  <label className="block space-y-1.5">
-                    <span className="text-sm text-zinc-300">Cidade/estado</span>
-                    <input
-                      value={cidadeEstado}
-                      onChange={(event) => setCidadeEstado(event.target.value)}
-                      maxLength={100}
-                      autoComplete="address-level2"
-                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white outline-none focus:border-[#d4af37]"
-                    />
-                  </label>
+                  {locationError && <p role="alert" className="rounded border border-red-500/50 p-3 text-sm text-red-200">{locationError}</p>}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block space-y-1.5">
+                      <span className="text-sm text-zinc-300">Estado</span>
+                      <select
+                        value={selectedState}
+                        onChange={(event) => {
+                          setSelectedState(event.target.value);
+                          setSelectedCity('');
+                          setCities([]);
+                          setLoadingCities(Boolean(event.target.value));
+                          setLocationError('');
+                        }}
+                        disabled={loadingStates}
+                        className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white outline-none focus:border-[#d4af37] disabled:opacity-60"
+                      >
+                        <option value="">{loadingStates ? 'Carregando estados...' : 'Selecione um estado'}</option>
+                        {states.map((state) => (
+                          <option key={state.id} value={state.sigla}>{state.nome}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-1.5">
+                      <span className="text-sm text-zinc-300">Cidade</span>
+                      <select
+                        value={selectedCity}
+                        onChange={(event) => setSelectedCity(event.target.value)}
+                        disabled={!selectedState || loadingCities || cities.length === 0}
+                        className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white outline-none focus:border-[#d4af37] disabled:opacity-60"
+                      >
+                        <option value="">
+                          {!selectedState ? 'Selecione primeiro o estado' : loadingCities ? 'Carregando cidades...' : 'Selecione uma cidade'}
+                        </option>
+                        {cities.map((city) => (
+                          <option key={city.id} value={city.nome}>{city.nome}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </section>
 
                 <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-3">

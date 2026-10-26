@@ -74,6 +74,51 @@ func TestUpdateProfileRejectsOversizedFields(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileValidatesPhoneAndBirthDate(t *testing.T) {
+	tests := []struct {
+		name      string
+		phone     string
+		birthDate string
+	}{
+		{name: "phone without formatting", phone: "81981818181", birthDate: "15/05/1995"},
+		{name: "date without formatting", phone: "(41) 99999-1111", birthDate: "01012001"},
+		{name: "impossible date", phone: "(41) 99999-1111", birthDate: "31/02/2001"},
+		{name: "future date", phone: "(41) 99999-1111", birthDate: time.Now().AddDate(1, 0, 0).Format("02/01/2006")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tokenManager := auth.NewTokenManager("test-secret")
+			handler := NewAuthHandler(tokenManager)
+			user := handler.users["jogador"]
+			token, _, err := tokenManager.GenerateToken(user, 24*time.Hour)
+			if err != nil {
+				t.Fatalf("generate token: %v", err)
+			}
+			body, err := json.Marshal(models.UserProfileUpdate{
+				NomeCompleto: "Nome não deve ser salvo",
+				Telefone:     test.phone,
+				DataNasc:     test.birthDate,
+				CidadeEstado: "São Paulo/SP",
+			})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			request := httptest.NewRequest(http.MethodPut, "/api/auth/profile", strings.NewReader(string(body)))
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			tokenManager.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile)).ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("invalid profile status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			if user.NomeCompleto != "Jogador VIP" {
+				t.Fatalf("profile changed despite invalid phone/date: %q", user.NomeCompleto)
+			}
+		})
+	}
+}
+
 func TestChangePasswordRequiresCurrentPasswordAndUpdatesCredentials(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret")
 	handler := NewAuthHandler(tokenManager)
