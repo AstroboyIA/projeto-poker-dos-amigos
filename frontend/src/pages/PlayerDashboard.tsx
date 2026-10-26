@@ -47,10 +47,10 @@ export const PlayerDashboard: React.FC = () => {
     {
       id: 'jogadores',
       title: 'JOGADORES',
-      desc: 'Gerencie os jogadores do clube',
+      desc: 'Seu perfil e sua lista de amigos',
       icon: UserIcon,
       color: 'from-amber-600 to-yellow-800',
-      action: () => setSelectedModule('Perfil de Jogador e Lista de Amigos'),
+      action: () => navigate('/player/community'),
     },
     {
       id: 'ranking',
