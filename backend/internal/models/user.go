@@ -64,6 +64,13 @@ type RegisterRequest struct {
 	AceitouTermo bool   `json:"aceitou_termos"`
 }
 
+type UserProfileUpdate struct {
+	NomeCompleto string `json:"nome_completo"`
+	Telefone     string `json:"telefone"`
+	DataNasc     string `json:"data_nascimento"`
+	CidadeEstado string `json:"cidade_estado"`
+}
+
 type AuthResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`

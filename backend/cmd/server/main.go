@@ -85,6 +85,7 @@ func main() {
 		r.Use(tokenManager.AuthMiddleware)
 
 		r.Get("/api/auth/me", authHandler.Me)
+		r.Put("/api/auth/profile", authHandler.UpdateProfile)
 
 		// Módulos
 		r.Get("/api/tournaments", tournamentHandler.GetTournaments)

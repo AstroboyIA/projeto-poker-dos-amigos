@@ -8,6 +8,7 @@ interface AuthContextType {
   login: (token: string, user: User) => void;
   logout: () => void;
   updateUser: (user: User) => void;
+  updateSession: (token: string, user: User) => void;
   refreshUser: () => Promise<void>;
   loading: boolean;
 }
@@ -55,6 +56,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(updated);
   };
 
+  const updateSession = (newToken: string, updatedUser: User) => {
+    localStorage.setItem('poker_token', newToken);
+    setToken(newToken);
+    setUser(updatedUser);
+  };
+
   const refreshUser = async () => {
     if (!token) return;
     try {
@@ -66,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUser, refreshUser, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, updateUser, updateSession, refreshUser, loading }}>
       {children}
     </AuthContext.Provider>
   );

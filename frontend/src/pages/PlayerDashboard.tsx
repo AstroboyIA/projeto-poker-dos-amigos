@@ -111,10 +111,10 @@ export const PlayerDashboard: React.FC = () => {
     {
       id: 'configuracoes',
       title: 'CONFIGURAÇÕES',
-      desc: 'Ajustes e preferências do sistema',
+      desc: 'Atualize os dados da sua conta',
       icon: Settings,
       color: 'from-zinc-700 to-zinc-900',
-      action: () => setSelectedModule('Preferências de Baralho, Sons e Tema'),
+      action: () => navigate('/player/settings'),
     },
   ];
 

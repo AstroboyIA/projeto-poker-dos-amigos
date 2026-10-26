@@ -6,10 +6,73 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/auth"
 	"github.com/walissonpaulo/poker-dos-amigos-backend/internal/models"
 )
+
+func TestUpdateProfileChangesOnlyAuthenticatedUserProfile(t *testing.T) {
+	tokenManager := auth.NewTokenManager("test-secret")
+	handler := NewAuthHandler(tokenManager)
+	user := handler.users["jogador"]
+	token, _, err := tokenManager.GenerateToken(user, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/api/auth/profile", strings.NewReader(
+		`{"nome_completo":"Jogador Atualizado","telefone":"(41) 99999-1111","data_nascimento":"20/06/1996","cidade_estado":"Curitiba/PR","role":"admin_gerente","saldo_fichas":0}`,
+	))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	tokenManager.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile)).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("update profile status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if user.NomeCompleto != "Jogador Atualizado" || user.Telefone != "(41) 99999-1111" ||
+		user.DataNasc != "20/06/1996" || user.CidadeEstado != "Curitiba/PR" {
+		t.Fatalf("profile fields were not updated: %+v", user)
+	}
+	if user.Role != models.RoleJogador || user.SaldoFichas != initialPlayerChips {
+		t.Fatalf("protected fields changed: role=%s balance=%d", user.Role, user.SaldoFichas)
+	}
+
+	var result struct {
+		Data models.AuthResponse `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if result.Data.Token == "" || result.Data.User.NomeCompleto != "Jogador Atualizado" || result.Data.User.Username != user.Username {
+		t.Fatalf("unexpected updated user response: %+v", result.Data)
+	}
+}
+
+func TestUpdateProfileRejectsOversizedFields(t *testing.T) {
+	tokenManager := auth.NewTokenManager("test-secret")
+	handler := NewAuthHandler(tokenManager)
+	user := handler.users["jogador"]
+	token, _, err := tokenManager.GenerateToken(user, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/api/auth/profile", strings.NewReader(
+		`{"nome_completo":"`+strings.Repeat("a", 256)+`"}`,
+	))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	tokenManager.AuthMiddleware(http.HandlerFunc(handler.UpdateProfile)).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized profile status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if user.NomeCompleto != "Jogador VIP" {
+		t.Fatalf("profile changed after invalid request: %q", user.NomeCompleto)
+	}
+}
 
 func TestUsernameOnlyRegistrationAndLogin(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret")

@@ -468,6 +468,31 @@ func (s *Store) GetUserByID(ctx context.Context, userID uuid.UUID) (*models.User
 	return user, nil
 }
 
+func (s *Store) UpdateUserProfile(ctx context.Context, userID uuid.UUID, profile models.UserProfileUpdate) (*models.User, error) {
+	user := new(models.User)
+	err := scanUser(s.pool.QueryRow(ctx, `
+		UPDATE users
+		SET nome_completo = NULLIF($2, ''),
+			telefone = NULLIF($3, ''),
+			data_nascimento = NULLIF($4, ''),
+			cidade_estado = NULLIF($5, ''),
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, COALESCE(username, ''), COALESCE(nome_completo, ''),
+			COALESCE(telefone, ''), COALESCE(email, ''), password_hash,
+			COALESCE(data_nascimento, ''), COALESCE(cidade_estado, ''),
+			COALESCE(aceitou_termos, FALSE), COALESCE(role, 'jogador'),
+			COALESCE(status, 'ativo'), COALESCE(saldo_fichas, 0), created_at, updated_at
+	`, userID, profile.NomeCompleto, profile.Telefone, profile.DataNasc, profile.CidadeEstado), user)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("update user profile: %w", err)
+	}
+	return user, nil
+}
+
 func scanUser(row pgx.Row, user *models.User) error {
 	return row.Scan(
 		&user.ID, &user.Username, &user.NomeCompleto, &user.Telefone, &user.Email,

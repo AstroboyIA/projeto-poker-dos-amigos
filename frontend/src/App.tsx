@@ -12,6 +12,7 @@ import { WalletPage } from './pages/Wallet';
 import { TournamentLobbyPage } from './pages/TournamentLobby';
 import { PlayerHistoryPage } from './pages/PlayerHistory';
 import { TournamentRoomPage } from './pages/TournamentRoom';
+import { PlayerSettingsPage } from './pages/PlayerSettings';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { loading } = useAuth();
@@ -80,6 +81,7 @@ export function App() {
           />
           <Route path="/wallet" element={<ProtectedRoute><WalletPage /></ProtectedRoute>} />
           <Route path="/player/history" element={<ProtectedRoute><PlayerHistoryPage /></ProtectedRoute>} />
+          <Route path="/player/settings" element={<ProtectedRoute><PlayerSettingsPage /></ProtectedRoute>} />
           <Route path="/tournaments" element={<ProtectedRoute><TournamentLobbyPage /></ProtectedRoute>} />
           <Route path="/tournaments/:tournamentId/room" element={<ProtectedRoute><TournamentRoomPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />

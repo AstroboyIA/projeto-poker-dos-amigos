@@ -369,6 +369,87 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, user)
 }
 
+func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := r.Context().Value(auth.UserContextKey).(*auth.Claims)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Usuário não autenticado")
+		return
+	}
+
+	var profile models.UserProfileUpdate
+	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+		response.Error(w, http.StatusBadRequest, "Dados de perfil inválidos")
+		return
+	}
+	profile.NomeCompleto = strings.TrimSpace(profile.NomeCompleto)
+	profile.Telefone = strings.TrimSpace(profile.Telefone)
+	profile.DataNasc = strings.TrimSpace(profile.DataNasc)
+	profile.CidadeEstado = strings.TrimSpace(profile.CidadeEstado)
+	if len([]rune(profile.NomeCompleto)) > 255 ||
+		len([]rune(profile.Telefone)) > 50 ||
+		len([]rune(profile.DataNasc)) > 20 ||
+		len([]rune(profile.CidadeEstado)) > 100 {
+		response.Error(w, http.StatusBadRequest, "Um ou mais campos excedem o tamanho permitido")
+		return
+	}
+
+	var user *models.User
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		updatedUser, err := h.store.UpdateUserProfile(ctx, claims.UserID, profile)
+		if err != nil {
+			if errors.Is(err, database.ErrUserNotFound) {
+				response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+				return
+			}
+			log.Printf("Falha ao atualizar perfil do usuário: %v", err)
+			response.Error(w, http.StatusInternalServerError, "Falha ao atualizar perfil")
+			return
+		}
+		user = updatedUser
+	} else {
+		h.mu.Lock()
+		for _, storedUser := range h.users {
+			if storedUser.ID != claims.UserID {
+				continue
+			}
+			storedUser.NomeCompleto = profile.NomeCompleto
+			storedUser.Telefone = profile.Telefone
+			storedUser.DataNasc = profile.DataNasc
+			storedUser.CidadeEstado = profile.CidadeEstado
+			storedUser.UpdatedAt = time.Now()
+			updatedUser := *storedUser
+			user = &updatedUser
+			break
+		}
+		h.mu.Unlock()
+	}
+
+	if user == nil {
+		response.Error(w, http.StatusNotFound, "Usuário não encontrado")
+		return
+	}
+
+	tokenDuration := 24 * time.Hour
+	if claims.ExpiresAt != nil {
+		tokenDuration = time.Until(claims.ExpiresAt.Time)
+		if tokenDuration <= 0 {
+			response.Error(w, http.StatusUnauthorized, "Sessão expirada")
+			return
+		}
+	}
+	token, expiresAt, err := h.tokenManager.GenerateToken(user, tokenDuration)
+	if err != nil {
+		log.Printf("Falha ao renovar token após atualizar perfil: %v", err)
+		response.Error(w, http.StatusInternalServerError, "Perfil atualizado, mas não foi possível renovar a sessão")
+		return
+	}
+	response.JSON(w, http.StatusOK, models.AuthResponse{
+		Token: token, ExpiresAt: expiresAt, User: *user,
+	})
+}
+
 func (h *AuthHandler) GetUserByEmail(email string) (*models.User, bool) {
 	if h.store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -43,6 +43,25 @@ export const api = {
     return data.data;
   },
 
+  async updateUserProfile(token: string, profile: {
+    nome_completo: string;
+    telefone: string;
+    data_nascimento: string;
+    cidade_estado: string;
+  }): Promise<AuthResponse> {
+    const res = await fetch(`${API_BASE}/auth/profile`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: ['Bearer', token].join(' '),
+      },
+      body: JSON.stringify(profile),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Falha ao atualizar perfil');
+    return data.data;
+  },
+
   async getTournaments(token: string): Promise<Tournament[]> {
     const res = await fetch(`${API_BASE}/tournaments`, {
       headers: { Authorization: `Bearer ${token}` },
